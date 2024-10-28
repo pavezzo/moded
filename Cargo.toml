@@ -1,0 +1,10 @@
+[package]
+name = "moded"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ab_glyph = "0.2.29"
+nalgebra = "0.33.1"
+gl = "*"
+glfw = "*"
