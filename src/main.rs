@@ -254,7 +254,7 @@ fn main() {
     //}
 
     //let mut state = State { width: WIDTH as i32, height: HEIGHT as i32, window_changed_size: true, io: Default::default(), char_scale: 70.0, char_width: char_cache.get(' ').unwrap().width, char_height: char_cache.get(' ').unwrap().height, cursor: CursorPos {x: 1, y: 1} };
-    let mut state = State { width: WIDTH as i32, height: HEIGHT as i32, window_changed_size: true, char_scale: 45.0, char_width: 0.0, char_height: 0.0, cursor: CursorPos {x: 1, y: 1, wanted_x: 1}, key_listening_mode: KeyListeningMode::KeysAndChars, io: Io { chars: String::new(), special_keys: Vec::new(), modifiers: glfw::Modifiers::empty() } };
+    let mut state = State { width: WIDTH as i32, height: HEIGHT as i32, window_changed_size: true, char_scale: 50.0, char_width: 0.0, char_height: 0.0, cursor: CursorPos {x: 1, y: 1, wanted_x: 1}, key_listening_mode: KeyListeningMode::KeysAndChars, io: Io { chars: String::new(), special_keys: Vec::new(), modifiers: glfw::Modifiers::empty() } };
     let char_cache = CharacterCache::from_font_bytes(&state, include_bytes!("../JetBrainsMono-Medium.ttf"));
     state.char_width = char_cache.get('W').unwrap().width;
     state.char_height = char_cache.get(' ').unwrap().height;

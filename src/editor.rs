@@ -43,7 +43,7 @@ impl Editor {
                 state.cursor.x += state.io.chars.chars().count() as u32;
             }
             if state.io.pressed_special(SpecialKey::Enter) {
-                let line_len = self.buffer.line_len(line) - 1;
+                let line_len = self.buffer.line_len(line);
                 if line_len - (state.cursor.x as usize - 1) > 0 {
                     self.buffer.split_line_at_index(line, state.cursor.x as usize - 1);
                 } else {
@@ -60,24 +60,14 @@ impl Editor {
             }
             if state.io.pressed_special(SpecialKey::Backspace) {
                 let row_len = self.buffer.line_len(line);
-                if row_len > 1 && state.cursor.x > 1 && state.cursor.x as usize <= row_len {
-                    self.buffer.remove_from_line(line, state.cursor.x as usize - 2, 1);
+                if row_len > 0 && state.cursor.x > 1 {
+                    self.buffer.remove_from_line(line, state.cursor.x as usize - 1, 1);
                     state.cursor.x -= 1;
                     state.cursor.wanted_x = state.cursor.x;
-                } else if row_len == 1 && state.cursor.x == 1 {
-                    self.buffer.remove_line(line);
-                    if state.cursor.y > 1 {
-                        let len = self.buffer.line_len(line - 1);
-                        state.cursor.y -= 1;
-                        state.cursor.x = (len as u32 - 1).max(1);
-                        state.cursor.wanted_x = state.cursor.x;
-                    }
                 } else if state.cursor.x == 1 && state.cursor.y > 1 {
-                    //self.buffer.remove_from_end_and_merge(line - 1, 1);
-                    //self.buffer.remove_line_index_len(line - 1, self.buffer.line_len(line - 1), 1);
                     let next_cursor_pos = self.buffer.line_len(line - 1);
-                    self.buffer.remove_from_line(line - 1, self.buffer.line_len(line - 1) - 1, 1);
-                    state.cursor.x = next_cursor_pos as u32;
+                    self.buffer.remove_line_sep(line - 1);
+                    state.cursor.x = next_cursor_pos as u32 + 1;
                     state.cursor.wanted_x = state.cursor.x;
                     state.cursor.y -= 1;
                 }
@@ -100,7 +90,7 @@ impl Editor {
                 NormalCmd::Append => {
                     self.mode = EditorMode::Insert;
                     let row_len = self.buffer.line_len(line);
-                    if row_len > 1 {
+                    if row_len > 0 {
                         state.cursor.x += 1;
                     }
                     executed += 1;
@@ -109,7 +99,7 @@ impl Editor {
                     if state.cursor.y < self.buffer.total_lines() as u32 {
                         state.cursor.y += 1;
                     }
-                    let max_x = (self.buffer.line_len(state.cursor.y as usize - 1) as u32 - 1).max(1);
+                    let max_x = self.buffer.line_len(state.cursor.y as usize - 1).max(1) as u32;
                     if state.cursor.wanted_x > max_x {
                         state.cursor.x = max_x;
                     } else {
@@ -129,7 +119,7 @@ impl Editor {
                     executed += 1;
                 },
                 NormalCmd::LineEnd => {
-                    state.cursor.x = (self.buffer.line_len(state.cursor.y as usize - 1) as u32 - 1).max(1);
+                    state.cursor.x = (self.buffer.line_len(state.cursor.y as usize - 1) as u32).max(1);
                     state.cursor.wanted_x = state.cursor.x;
                     executed += 1;
                 },
@@ -140,7 +130,7 @@ impl Editor {
                 },
                 NormalCmd::Right => {
                     let line_len = self.buffer.line_len(state.cursor.y as usize - 1);
-                    if state.cursor.x < state.max_cols() && state.cursor.x < line_len as u32 - 1 {
+                    if state.cursor.x < state.max_cols() && state.cursor.x < line_len as u32 {
                         state.cursor.x += 1;
                         state.cursor.wanted_x += 1;
                     }
@@ -150,7 +140,7 @@ impl Editor {
                     if state.cursor.y > 1 {
                         state.cursor.y -= 1;
                     }
-                    let max_x = (self.buffer.line_len(state.cursor.y as usize - 1) as u32 - 1).max(1);
+                    let max_x = (self.buffer.line_len(state.cursor.y as usize - 1) as u32).max(1);
                     if state.cursor.wanted_x > max_x {
                         state.cursor.x = max_x;
                     } else {
@@ -177,9 +167,9 @@ impl Editor {
                 },
                 NormalCmd::Xdel => {
                     let row_len = self.buffer.line_len(line);
-                    if row_len > 1 {
+                    if row_len > 0 {
                         self.buffer.remove_from_line(line, state.cursor.x as usize - 1, 1);
-                        if (state.cursor.x - 1) as usize >= (row_len - 2) && state.cursor.x > 1 {
+                        if (state.cursor.x - 1) as usize >= (row_len - 1) && state.cursor.x > 1 {
                             state.cursor.x -= 1;
                             state.cursor.wanted_x = state.cursor.x;
                         }

@@ -7,9 +7,27 @@ fn screen_chars_size(bytes: &[u8]) -> usize {
     st.len()
 }
 
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+pub enum LineSeparator {
+    LF = 1,
+    CRLF = 2,
+}
+
+impl LineSeparator {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            LineSeparator::LF => "\n",
+            LineSeparator::CRLF => "\r\n",
+        }
+    }
+}
+
+
+
 pub struct TextBuffer {
     pub chars: GapBuffer<u8>,
     pub lines: GapBuffer<usize>,
+    pub line_sep: LineSeparator,
 }
 
 impl TextBuffer {
@@ -18,12 +36,20 @@ impl TextBuffer {
         let st = unsafe {std::str::from_utf8_unchecked(&chars)};
         // assuming newlines for now
         let mut start = 0;
+        let line_sep = if st.contains("\r\n") {
+            LineSeparator::CRLF
+        } else {
+            LineSeparator::LF
+        };
+
         for line in st.lines() {
             lines.push(start);
-            start += line.len() + 1;
+            start += line.len() + line_sep as usize;
         }
+        let lines = GapBuffer::new(lines);
+        println!("Using {:?} line separator", line_sep);
 
-        Self { chars: GapBuffer::new(chars), lines: GapBuffer::new(lines) }
+        Self { chars: GapBuffer::new(chars), lines, line_sep }
     }
 
     // TODO: maybe make this work with references
@@ -36,7 +62,12 @@ impl TextBuffer {
             self.chars.get_to_end(start)
         };
         let mut st = String::from_utf8(bytes).unwrap();
-        st.pop();
+        if self.line_sep == LineSeparator::LF {
+            st.pop();
+        } else {
+            st.pop();
+            st.pop();
+        }
 
         st
     }
@@ -57,7 +88,7 @@ impl TextBuffer {
     // line lenght as seen by the user
     pub fn line_len(&self, line: usize) -> usize {
         let line = self.raw_line(line);
-        return line.chars().count();
+        return line.chars().count() - self.line_sep as usize;
         //if line + 1 < self.lines_len() {
         //    //return self.lines.get_by_pos(line + 1) - self.lines.get_by_pos(line)
         //}
@@ -99,15 +130,15 @@ impl TextBuffer {
     pub fn insert_empty_line(&mut self, row: usize) {
         if row < self.total_lines() {
             let index = self.lines.get_by_pos(row);
-            self.chars.insert(index, &[b'\n']);
+            self.chars.insert(index, self.line_sep.as_str().as_bytes());
             self.lines.insert(row, &[index]);
-            self.lines.increment_range_by((row+1)..self.lines.len(), 1);
+            self.lines.increment_range_by((row+1)..self.lines.len(), self.line_sep as usize);
             return;
         }
 
         let index = self.lines.get_by_pos(row - 1) + self.raw_line_len(row - 1);
-        self.chars.insert(index, &[b'\n']);
-        let before = self.lines.get_by_pos(row - 1) + self.raw_line_len(row - 1) - 1;
+        self.chars.insert(index, self.line_sep.as_str().as_bytes());
+        let before = self.lines.get_by_pos(row - 1) + self.raw_line_len(row - 1) - self.line_sep as usize;
         self.lines.insert(row, &[before]);
     }
 
@@ -124,11 +155,16 @@ impl TextBuffer {
             if i >= index { actual_len += char.len_utf8(); }
         }
 
+        if (actual_len + actual_index + self.line_sep as usize) == st.len() {
+            actual_len += self.line_sep as usize - 1;
+        }
+
+
         let b = self.chars.get_by_range((start + actual_index)..(start + actual_index + actual_len));
         self.chars.remove(start + actual_index, actual_len);
         self.lines.decrement_range_by((line + 1)..self.lines.len(), actual_len);
 
-        if b == b"\n" {
+        if b == self.line_sep.as_str().as_bytes() {
             self.lines.remove(line + 1, 1);
         }
     }
@@ -141,19 +177,28 @@ impl TextBuffer {
         self.lines.remove(line, 1);
     }
 
+    pub fn remove_line_sep(&mut self, line: usize) {
+        let start = self.lines.get_by_pos(line);
+        let len = self.raw_line_len(line);
+        //let next_line_len = self.line_len(line + 1);
+        self.chars.remove(start + len - self.line_sep as usize, self.line_sep as usize);
+        self.lines.decrement_range_by((line + 1)..self.lines.len(), self.line_sep as usize);
+        self.lines.remove(line + 1, 1);
+    }
+
     pub fn split_line_at_index(&mut self, line: usize, index: usize) {
+        let start = self.lines.get_by_pos(line);
+
         let st = self.line(line);
-        let mut i = 0;
         let mut actual_index = 0;
-        for char in st.chars() {
+        for (i, char) in st.chars().enumerate() {
             if i >= index { break; }
             actual_index += char.len_utf8();
-            i += 1;
         }
 
-        self.insert_empty_line(line + 1);
-        self.insert_into_line(line + 1, 0, st[actual_index..].as_bytes());
-        self.remove_from_line(line, index, st.chars().count() - index);
+        self.chars.insert(start + actual_index, self.line_sep.as_str().as_bytes());
+        self.lines.insert(line + 1, &[start + actual_index]);
+        self.lines.increment_range_by((line + 1)..self.lines.len(), self.line_sep as usize);
     }
 }
 
