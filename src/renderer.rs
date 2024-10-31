@@ -2,12 +2,12 @@ use crate::{shader::{RectShader, TextShader}, CharacterCache, State};
 
 pub struct DrawLine<'a> {
     pub text: &'a str,
-    pub linenr: u32,
+    pub linenr: usize,
     pub color: (f32, f32, f32),
 }
 
 impl<'a> DrawLine<'a> {
-    pub fn new(text: &'a str, linenr: u32, color: (f32, f32, f32)) -> Self {
+    pub fn new(text: &'a str, linenr: usize, color: (f32, f32, f32)) -> Self {
         Self { text, linenr, color }
     }
 }

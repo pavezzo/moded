@@ -1,6 +1,6 @@
 use std::{fs, io::{self, Read}, path::{Path, PathBuf}};
 
-use crate::{gap_buffer::TextBuffer, vim_commands::NormalCmd, SpecialKey, State};
+use crate::{gap_buffer::TextBuffer, vim_commands::*, SpecialKey, State};
 
 #[derive(PartialEq, Eq)]
 pub enum EditorMode {
@@ -40,7 +40,7 @@ impl Editor {
             let line = state.cursor.y as usize - 1;
             if !state.io.chars.is_empty() {
                 self.buffer.insert_into_line(line, state.cursor.x as usize - 1, state.io.chars.as_bytes());
-                state.cursor.x += state.io.chars.chars().count() as u32;
+                state.cursor.x += state.io.chars.chars().count();
             }
             if state.io.pressed_special(SpecialKey::Enter) {
                 let line_len = self.buffer.line_len(line);
@@ -61,20 +61,20 @@ impl Editor {
             if state.io.pressed_special(SpecialKey::Backspace) {
                 let row_len = self.buffer.line_len(line);
                 if row_len > 0 && state.cursor.x > 1 {
-                    self.buffer.remove_from_line(line, state.cursor.x as usize - 1, 1);
+                    self.buffer.remove_from_line(line, state.cursor.x as usize - 2, 1);
                     state.cursor.x -= 1;
                     state.cursor.wanted_x = state.cursor.x;
                 } else if state.cursor.x == 1 && state.cursor.y > 1 {
                     let next_cursor_pos = self.buffer.line_len(line - 1);
                     self.buffer.remove_line_sep(line - 1);
-                    state.cursor.x = next_cursor_pos as u32 + 1;
+                    state.cursor.x = next_cursor_pos + 1;
                     state.cursor.wanted_x = state.cursor.x;
                     state.cursor.y -= 1;
                 }
             }
         } else if self.mode == EditorMode::Normal {
             for char in state.io.chars.chars() {
-                let Some(cmd) = NormalCmd::from_char(char) else { continue; };
+                let Some(cmd) = NormalCmd::from_char(&self.normal_commands, char) else { continue; };
                 self.normal_commands.push(cmd);
             }
             self.execute_normal_commands(state);
@@ -85,7 +85,9 @@ impl Editor {
         let mut executed = 0;
         let line = state.cursor.y as usize - 1;
 
-        for cmd in &self.normal_commands {
+        //for cmd in &self.normal_commands {
+        for i in 0..self.normal_commands.len() {
+            let cmd = &self.normal_commands[i];
             match cmd {
                 NormalCmd::Append => {
                     self.mode = EditorMode::Insert;
@@ -96,10 +98,10 @@ impl Editor {
                     executed += 1;
                 },
                 NormalCmd::Down => {
-                    if state.cursor.y < self.buffer.total_lines() as u32 {
+                    if state.cursor.y < self.buffer.total_lines() {
                         state.cursor.y += 1;
                     }
-                    let max_x = self.buffer.line_len(state.cursor.y as usize - 1).max(1) as u32;
+                    let max_x = self.buffer.line_len(state.cursor.y as usize - 1).max(1);
                     if state.cursor.wanted_x > max_x {
                         state.cursor.x = max_x;
                     } else {
@@ -119,7 +121,7 @@ impl Editor {
                     executed += 1;
                 },
                 NormalCmd::LineEnd => {
-                    state.cursor.x = (self.buffer.line_len(state.cursor.y as usize - 1) as u32).max(1);
+                    state.cursor.x = (self.buffer.line_len(state.cursor.y as usize - 1)).max(1);
                     state.cursor.wanted_x = state.cursor.x;
                     executed += 1;
                 },
@@ -130,7 +132,7 @@ impl Editor {
                 },
                 NormalCmd::Right => {
                     let line_len = self.buffer.line_len(state.cursor.y as usize - 1);
-                    if state.cursor.x < state.max_cols() && state.cursor.x < line_len as u32 {
+                    if state.cursor.x < state.max_cols() && state.cursor.x < line_len {
                         state.cursor.x += 1;
                         state.cursor.wanted_x += 1;
                     }
@@ -140,7 +142,7 @@ impl Editor {
                     if state.cursor.y > 1 {
                         state.cursor.y -= 1;
                     }
-                    let max_x = (self.buffer.line_len(state.cursor.y as usize - 1) as u32).max(1);
+                    let max_x = (self.buffer.line_len(state.cursor.y as usize - 1)).max(1);
                     if state.cursor.wanted_x > max_x {
                         state.cursor.x = max_x;
                     } else {
@@ -149,19 +151,114 @@ impl Editor {
                     executed += 1;
                 },
                 NormalCmd::Word => {
-                    let line = self.buffer.line(state.cursor.y as usize - 1);
-                    let mut pos = None;
-                    for (i, char) in line.chars().skip(state.cursor.x as usize - 1).enumerate() {
-                        if char == ' ' {
-                            pos = Some(i);
-                            break;
-                        }
+                    let previous_cmd = if i > 0 {
+                        self.normal_commands.get(i - 1)
+                    } else {
+                        None
+                    };
+                    match previous_cmd {
+                        None => {
+                            let pos = find_next_word_start(state, &self.buffer);
+                            let Some(pos) = pos else { executed += 1; continue; };
+                            state.cursor.x = pos.col + 1;
+                            state.cursor.y = pos.line + 1;
+                            state.cursor.wanted_x = state.cursor.x;
+                        },
+                        Some(NormalCmd::Inside) => {
+                            let Some(start) = find_current_word_start(&state, &self.buffer) else { executed += 1; continue };
+                            let Some(end) = find_current_word_end(&state, &self.buffer) else { executed += 1; continue };
+                            let previous_cmd = if i > 1 {
+                                self.normal_commands.get(i - 2)
+                            } else {
+                                None
+                            };
+                            match previous_cmd {
+                                None => executed += 1,
+                                Some(NormalCmd::Delete) => {
+                                    let line = state.cursor.y - 1;
+                                    self.buffer.remove_from_line(line, start.col, end.col - start.col + 1);
+                                    state.cursor.x = ((start.col + 1).min(self.buffer.line_len(line))).max(1);
+                                    state.cursor.wanted_x = state.cursor.x;
+                                    executed += 2;
+                                }
+                                _ => {},
+                            }
+
+                        },
+                        Some(NormalCmd::Delete) => {
+                            let pos = find_next_word_start(state, &self.buffer);
+                            let Some(pos) = pos else { executed += 1; continue; };
+                            if pos.line + 1 == state.cursor.y {
+                                self.buffer.remove_from_line(state.cursor.y - 1, state.cursor.x - 1, pos.col - state.cursor.x);
+                            }
+                            executed += 1;
+                        },
+                        _ => {},
                     }
-                    //if let Some(pos) = line.chars().skip(state.cursor.x as usize - 1).find(|x| *x == ' ') {
-                    //if let Some(pos) = line[(state.cursor.x as usize - 1)..line.len()].find(' ') {
-                    if let Some(pos) = pos {
-                        state.cursor.x += pos as u32 + 1;
-                        state.cursor.wanted_x = state.cursor.x;
+                    executed += 1;
+                },
+                NormalCmd::WORD => {
+                    let previous_cmd = if i > 0 {
+                        self.normal_commands.get(i - 1)
+                    } else {
+                        None
+                    };
+                    match previous_cmd {
+                        None => {
+                            let pos = find_next_WORD_start(state, &self.buffer);
+                            let Some(pos) = pos else { executed += 1; continue; };
+                            state.cursor.x = pos.col + 1;
+                            state.cursor.y = pos.line + 1;
+                            state.cursor.wanted_x = state.cursor.x;
+                        },
+                        Some(NormalCmd::Inside) => {
+                            let Some(start) = find_current_WORD_start(&state, &self.buffer) else { executed += 1; continue };
+                            let Some(end) = find_current_WORD_end(&state, &self.buffer) else { executed += 1; continue };
+                            let previous_cmd = if i > 1 {
+                                self.normal_commands.get(i - 2)
+                            } else {
+                                None
+                            };
+                            match previous_cmd {
+                                None => executed += 1,
+                                Some(NormalCmd::Delete) => {
+                                    let line = state.cursor.y - 1;
+                                    self.buffer.remove_from_line(line, start.col, end.col - start.col + 1);
+                                    state.cursor.x = ((start.col + 1).min(self.buffer.line_len(line))).max(1);
+                                    state.cursor.wanted_x = state.cursor.x;
+                                    executed += 2;
+                                }
+                                _ => {},
+                            }
+
+                        },
+                        Some(NormalCmd::Delete) => {
+                            let pos = find_next_WORD_start(state, &self.buffer);
+                            let Some(pos) = pos else { executed += 1; continue; };
+                            if pos.line + 1 == state.cursor.y {
+                                self.buffer.remove_from_line(state.cursor.y - 1, state.cursor.x - 1, pos.col - state.cursor.x);
+                            }
+                            executed += 1;
+                        },
+                        _ => {},
+                    }
+                    executed += 1;
+                },
+                NormalCmd::BackWord => {
+                    let previous_cmd = if i > 0 {
+                        self.normal_commands.get(i - 1)
+                    } else {
+                        None
+                    };
+                    let pos = find_previous_word_start(state, &self.buffer);
+                    let Some(pos) = pos else { executed += 1; continue; };
+                    match previous_cmd {
+                        None => {
+                            state.cursor.y = pos.line + 1;
+                            state.cursor.x = pos.col + 1;
+                            state.cursor.wanted_x = state.cursor.x;
+                        },
+                        _ => {},
                     }
                     executed += 1;
                 },
@@ -176,6 +273,26 @@ impl Editor {
                     }
                     executed += 1;
                 },
+                NormalCmd::Delete => {
+                    if i == 0 { continue; }
+                    let previous_cmd = self.normal_commands.get(i-1);
+                    match previous_cmd {
+                        Some(NormalCmd::Delete) => {
+                            self.buffer.remove_line(state.cursor.y as usize - 1);
+                            if state.cursor.y as usize > self.buffer.total_lines() && state.cursor.y > 1 {
+                                state.cursor.y -= 1;
+                            }
+                            let line_len = self.buffer.line_len(state.cursor.y - 1);
+                            if state.cursor.x as usize > line_len {
+                                state.cursor.x = line_len.max(1);
+                            }
+                            executed += 2;
+                        },
+                        None => continue,
+                        _ => continue,
+                    }
+                },
+                _ => {},
             }
         }
 
