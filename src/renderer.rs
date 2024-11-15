@@ -67,8 +67,9 @@ impl TextRenderer {
             };
             //let c = self.char_cache.get(ch).unwrap();
 
+            let xadvance = ((state.char_width - c.width) / 2.0).max(0.0);
             let (h, w) = (c.height, c.width);
-            let (xpos, ypos) = (x, state.height as f32 - self.font_ascent - c.position_max_y - (self.font_height * (line.linenr - 1) as f32));
+            let (xpos, ypos) = (x + xadvance, state.height as f32 - self.font_ascent - c.position_max_y - (self.font_height * (line.linenr - 1) as f32));
 
             let vertices: [[f32; 4]; 6] = [
                 [xpos,     ypos + h, 0.0, 0.0],
