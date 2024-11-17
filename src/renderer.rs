@@ -114,14 +114,14 @@ impl DrawRect {
         Self { height, width, xpos, ypos, color }
     }
 
-    pub fn from_screen_points(state: &State, height: f32, width: f32, xpos: f32, ypos: f32, color: (f32, f32, f32)) -> Self {
+    pub fn from_screen_points(state: &State, xpos: f32, ypos: f32, color: (f32, f32, f32)) -> Self {
         // -1.0, -1.0 = down left
         //let width = ((width * 2.0) / state.width as f32) - 1.0;
         //let height = ((height * 2.0) / state.height as f32) - 1.0;
         let xpos = ((xpos * 2.0) / state.width as f32) - 1.0;
         let ypos = ((ypos * 2.0) / state.height as f32) - 1.0;
-        let width = (width * 2.0) / state.width as f32;
-        let height = (height * 2.0) / state.height as f32;
+        let width = (state.char_width * 2.0) / state.width as f32;
+        let height = (state.char_height * 2.0) / state.height as f32;
         Self { height, width, xpos, ypos, color }
     }
 }
@@ -186,4 +186,20 @@ impl RectRenderer {
             gl::BindVertexArray(0);
         }
     }
+}
+
+pub fn highlight_line(state: &State, start: usize, end: usize, line: usize, start_line: usize) -> DrawRect {
+    let mut width = (end + 1 - start) as f32 * state.char_width;
+    width = (width * 2.0) / state.width as f32;
+    let height = (state.char_height * 2.0) / state.height as f32;
+
+    let mut xpos = start as f32 * state.char_width;
+    xpos = ((xpos * 2.0) / state.width as f32) - 1.0;
+
+    let mut ypos = state.height as f32 - ((line + 1 - start_line) as f32 * state.char_height);
+    ypos = ((ypos * 2.0) / state.height as f32) - 1.0;
+
+    let color = (0.5, 0.5, 0.5);
+
+    DrawRect::new(height, width, xpos, ypos, color)
 }

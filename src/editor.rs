@@ -1,11 +1,12 @@
 use std::{fs, io::{self, Read}, path::{Path, PathBuf}};
 
-use crate::{gap_buffer::TextBuffer, vim_commands::*, SpecialKey, State};
+use crate::{gap_buffer::{LinePos, TextBuffer}, vim_commands::*, SpecialKey, State};
 
 #[derive(PartialEq, Eq)]
 pub enum EditorMode {
     Insert,
     Normal,
+    Visual,
 }
 
 pub struct Editor {
@@ -13,6 +14,9 @@ pub struct Editor {
     pub file_path: PathBuf,
     pub mode: EditorMode,
     pub normal_commands: Vec<NormalCmd>,
+    pub visual_commands: Vec<VisualCmd>,
+    pub visual_range_anchor: LinePos,
+    pub visual_range_moving: LinePos,
 }
 
 
@@ -30,13 +34,16 @@ impl Editor {
                 file_path: path.to_owned(),
                 mode: EditorMode::Normal,
                 normal_commands: Vec::new(),
+                visual_commands: Vec::new(),
+                visual_range_anchor: LinePos { line: 0, col: 0 },
+                visual_range_moving: LinePos { line: 0, col: 0 },
             }
         }
         todo!();
     }
 
     pub fn handle_input(&mut self, state: &mut State) {
-        if self.mode == EditorMode::Insert {
+        if self.mode ==  EditorMode::Insert {
             let line = state.cursor.y as usize - 1;
             if !state.io.chars.is_empty() {
                 self.buffer.insert_into_line(line, state.cursor.x as usize - 1, state.io.chars.as_bytes());
@@ -78,6 +85,16 @@ impl Editor {
                 self.normal_commands.push(cmd);
             }
             self.execute_normal_commands(state);
+        } else if self.mode == EditorMode::Visual {
+            for char in state.io.chars.chars() {
+                let Some(cmd) = VisualCmd::from_char(&self.visual_commands, char) else { continue; };
+                self.visual_commands.push(cmd);
+            }
+            self.execute_visual_commands(state);
+            if state.io.pressed_special(SpecialKey::Escape) {
+                self.visual_commands.clear();
+                self.mode = EditorMode::Normal;
+            }
         }
     }
 
@@ -258,6 +275,9 @@ impl Editor {
                             state.cursor.x = pos.col + 1;
                             state.cursor.wanted_x = state.cursor.x;
                         },
+                        Some(NormalCmd::Delete) => {
+
+                        },
                         _ => {},
                     }
                     executed += 1;
@@ -274,7 +294,7 @@ impl Editor {
                     executed += 1;
                 },
                 NormalCmd::Delete => {
-                    if i == 0 { continue; }
+                    if i == 0 { continue }
                     let previous_cmd = self.normal_commands.get(i-1);
                     match previous_cmd {
                         Some(NormalCmd::Delete) => {
@@ -292,10 +312,181 @@ impl Editor {
                         _ => continue,
                     }
                 },
-                _ => {},
+                NormalCmd::Visual => {
+                    self.mode = EditorMode::Visual;
+                    let cursor = state.cursor.to_linepos();
+                    self.visual_range_anchor = cursor;
+                    self.visual_range_moving = cursor;
+
+                    executed += 1;
+                },
+                NormalCmd::Inside => continue,
+                _ => todo!("{:?}", cmd),
             }
         }
 
         self.normal_commands.drain(0..executed);
+    }
+
+    fn execute_visual_commands(&mut self, state: &mut State) {
+        let mut executed = 0;
+        let line = state.cursor.y as usize - 1;
+
+        for i in 0..self.visual_commands.len() {
+            let cmd = &self.visual_commands[i];
+            match cmd {
+                VisualCmd::Down => {
+                    if state.cursor.y < self.buffer.total_lines() {
+                        state.cursor.y += 1;
+                    }
+                    let max_x = self.buffer.line_len(state.cursor.y as usize - 1).max(1);
+                    if state.cursor.wanted_x > max_x {
+                        state.cursor.x = max_x;
+                    } else {
+                        state.cursor.x = state.cursor.wanted_x;
+                    }
+                    let cursor = state.cursor.to_linepos();
+                    self.visual_range_moving = cursor;
+                    executed += 1;
+                },
+                VisualCmd::Left => {
+                    if state.cursor.x > 1 {
+                        state.cursor.x -= 1;
+                        state.cursor.wanted_x -= 1;
+                    }
+                    let cursor = state.cursor.to_linepos();
+                    self.visual_range_moving = cursor;
+                    executed += 1;
+                },
+                VisualCmd::LineEnd => {
+                    // go one over line, as in vim
+                    state.cursor.x = (self.buffer.line_len(state.cursor.y as usize - 1) + 1).max(1);
+                    state.cursor.wanted_x = state.cursor.x;
+                    let cursor = state.cursor.to_linepos();
+                    self.visual_range_moving = cursor;
+                    executed += 1;
+                },
+                VisualCmd::LineStart => {
+                    state.cursor.x = 1;
+                    state.cursor.wanted_x = 1;
+                    let cursor = state.cursor.to_linepos();
+                    self.visual_range_moving = cursor;
+                    executed += 1;
+                },
+                VisualCmd::Right => {
+                    let line_len = self.buffer.line_len(state.cursor.y as usize - 1);
+                    // allow to go one over the line, as in vim
+                    if state.cursor.x <= line_len {
+                        state.cursor.x += 1;
+                        state.cursor.wanted_x += 1;
+                    }
+                    let cursor = state.cursor.to_linepos();
+                    self.visual_range_moving = cursor;
+                    executed += 1;
+                },
+                VisualCmd::Up => {
+                    if state.cursor.y > 1 {
+                        state.cursor.y -= 1;
+                    }
+                    let max_x = (self.buffer.line_len(state.cursor.y as usize - 1)).max(1);
+                    if state.cursor.wanted_x > max_x {
+                        state.cursor.x = max_x;
+                    } else {
+                        state.cursor.x = state.cursor.wanted_x;
+                    }
+                    let cursor = state.cursor.to_linepos();
+                    self.visual_range_moving = cursor;
+                    executed += 1;
+                },
+                VisualCmd::Word => {
+                    let previous_cmd = if i > 0 {
+                        self.visual_commands.get(i - 1)
+                    } else {
+                        None
+                    };
+                    match previous_cmd {
+                        None => {
+                            let pos = find_next_word_start(state, &self.buffer);
+                            let Some(pos) = pos else { executed += 1; continue; };
+                            state.cursor.x = pos.col + 1;
+                            state.cursor.y = pos.line + 1;
+                            state.cursor.wanted_x = state.cursor.x;
+
+                            let cursor = state.cursor.to_linepos();
+                            self.visual_range_moving = cursor;
+                        },
+                        Some(VisualCmd::Inside) => {
+                            let Some(start) = find_current_word_start(&state, &self.buffer) else { executed += 1; continue };
+                            self.visual_range_anchor = start;
+                            let Some(end) = find_current_word_end(&state, &self.buffer) else { executed += 1; continue };
+                            self.visual_range_moving = end;
+
+                            state.cursor.x = end.col + 1;
+                            state.cursor.y = end.line + 1;
+                            state.cursor.wanted_x = state.cursor.x;
+
+                            executed += 1;
+                        },
+                        _ => {},
+                    }
+                    executed += 1;
+                },
+                VisualCmd::WORD => {
+                    let previous_cmd = if i > 0 {
+                        self.visual_commands.get(i - 1)
+                    } else {
+                        None
+                    };
+                    match previous_cmd {
+                        None => {
+                            let pos = find_next_WORD_start(state, &self.buffer);
+                            let Some(pos) = pos else { executed += 1; continue; };
+                            state.cursor.x = pos.col + 1;
+                            state.cursor.y = pos.line + 1;
+                            state.cursor.wanted_x = state.cursor.x;
+
+                            let cursor = state.cursor.to_linepos();
+                            self.visual_range_moving = cursor;
+                        },
+                        Some(VisualCmd::Inside) => {
+                            let Some(start) = find_current_WORD_start(&state, &self.buffer) else { executed += 1; continue };
+                            self.visual_range_anchor = start;
+                            let Some(end) = find_current_WORD_end(&state, &self.buffer) else { executed += 1; continue };
+                            self.visual_range_anchor = end;
+
+                            executed += 1;
+                        },
+                        _ => {},
+                    }
+                    executed += 1;
+                },
+                VisualCmd::BackWord => {
+                    let pos = find_previous_word_start(state, &self.buffer);
+                    let Some(pos) = pos else { executed += 1; continue; };
+                    state.cursor.y = pos.line + 1;
+                    state.cursor.x = pos.col + 1;
+                    state.cursor.wanted_x = state.cursor.x;
+
+                    let cursor = state.cursor.to_linepos();
+                    self.visual_range_moving = cursor;
+                    executed += 1;
+                },
+                VisualCmd::Delete => {
+                    let min = self.visual_range_anchor.min(self.visual_range_moving);
+                    let max = self.visual_range_anchor.max(self.visual_range_moving);
+                    self.buffer.remove_by_range(min, max);
+                    self.mode = EditorMode::Normal;
+
+                    state.cursor.x = min.col + 1;
+                    state.cursor.wanted_x = state.cursor.x;
+                    state.cursor.y = min.line + 1;
+
+                    executed += 1;
+                },
+                _ => {},
+            }
+        }
+
+        self.visual_commands.drain(0..executed);
     }
 }

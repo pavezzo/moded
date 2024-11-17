@@ -20,6 +20,8 @@ pub enum NormalCmd {
     BackWord,
     WORD,
     Xdel,
+    Visual,
+    VisualLine,
 }
 
 
@@ -49,9 +51,51 @@ impl NormalCmd {
             'j' => Some(NormalCmd::Down),
             'k' => Some(NormalCmd::Up),
             'l' => Some(NormalCmd::Right),
+            'v' => Some(NormalCmd::Visual),
+            'V' => Some(NormalCmd::VisualLine),
             'w' => Some(NormalCmd::Word),
             'W' => Some(NormalCmd::WORD),
             'x' => Some(NormalCmd::Xdel),
+            _ => None,
+        }
+    }
+}
+
+#[repr(u8)]
+#[derive(PartialEq, Eq, Debug)]
+pub enum VisualCmd {
+    Around,
+    BackWord,
+    Delete,
+    Down,
+    Inside,
+    Left,
+    LineEnd,
+    LineStart,
+    NormalMode,
+    Right,
+    Up,
+    WORD,
+    Word,
+}
+
+impl VisualCmd {
+    pub fn from_char(_previous: &[VisualCmd], ch: char) -> Option<VisualCmd> {
+        match ch {
+            '$' => Some(VisualCmd::LineEnd),
+            '0' => Some(VisualCmd::LineStart),
+            'a' => Some(VisualCmd::Around),
+            'b' => Some(VisualCmd::BackWord),
+            'd' => Some(VisualCmd::Delete),
+            'h' => Some(VisualCmd::Left),
+            'i' => Some(VisualCmd::Inside),
+            'j' => Some(VisualCmd::Down),
+            'k' => Some(VisualCmd::Up),
+            'l' => Some(VisualCmd::Right),
+            'v' => Some(VisualCmd::NormalMode),
+            'w' => Some(VisualCmd::Word),
+            'W' => Some(VisualCmd::WORD),
+            'x' => Some(VisualCmd::Delete),
             _ => None,
         }
     }

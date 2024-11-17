@@ -7,8 +7,9 @@ pub mod vim_commands;
 
 use std::path::Path;
 
-use editor::Editor;
+use editor::{Editor, EditorMode};
 use font::CharacterCache;
+use gap_buffer::LinePos;
 use glfw::{self};
 use glfw::Context;
 use gl::{self};
@@ -16,7 +17,7 @@ use gl::{self};
 use ab_glyph::{self, Font, ScaleFont};
 
 use nalgebra::*;
-use renderer::{DrawLine, DrawRect, RectRenderer, TextRenderer};
+use renderer::{highlight_line, DrawLine, DrawRect, RectRenderer, TextRenderer};
 use shader::{RectShader, TextShader};
 
 
@@ -136,6 +137,14 @@ impl CursorPos {
         
         return (xpos, ypos);
     }
+
+    pub fn to_linepos(&self) -> LinePos {
+        LinePos { line: self.y - 1, col: self.x - 1 }
+    }
+    
+    pub fn to_line_col(&self) -> (usize, usize) {
+        (self.y - 1, self.x - 1)
+    }
 }
 
 pub struct State {
@@ -147,8 +156,6 @@ pub struct State {
     pub char_width: f32,
     pub char_height: f32,
     pub cursor: CursorPos,
-    pub screen_width: u32,
-    pub screen_height: u32,
 }
 
 impl State {
@@ -226,16 +233,16 @@ fn main() {
     }
 
     let text_shader = TextShader::new(TEXT_VERTEX_SHADER_SOURCE, TEXT_FRAGMENT_SHADER_SOURCE).unwrap();
-
     let rect_shader = RectShader::new(RECT_VERTEX_SHADER_SOURCE, RECT_FRAGMENT_SHADER_SOURCE).unwrap();
 
-    let mut state = State { width: screen_width as i32 / 2, height: screen_height as i32 / 2, window_changed_size: true, char_scale: 50.0, char_width: 0.0, char_height: 0.0, cursor: CursorPos {x: 1, y: 1, wanted_x: 1}, io: Io { chars: String::new(), special_keys: Vec::new(), modifiers: glfw::Modifiers::empty() }, screen_height, screen_width };
-    let char_cache = CharacterCache::from_font_bytes(&state, include_bytes!("../JetBrainsMono-Medium.ttf"));
+    let mut state = State { width: screen_width as i32 / 2, height: screen_height as i32 / 2, window_changed_size: true, char_scale: 50.0, char_width: 0.0, char_height: 0.0, cursor: CursorPos {x: 1, y: 1, wanted_x: 1}, io: Io { chars: String::new(), special_keys: Vec::new(), modifiers: glfw::Modifiers::empty() } };
+
+    let char_cache = CharacterCache::from_font_bytes(&state, include_bytes!("../fonts/JetBrainsMono-Medium.ttf"));
     state.char_width = char_cache.get('W').unwrap().width;
     state.char_height = char_cache.get(' ').unwrap().height;
 
     let (font_ascent, _font_descent, font_height) = {
-        let font = ab_glyph::FontRef::try_from_slice(include_bytes!("../JetBrainsMono-Medium.ttf")).unwrap();
+        let font = ab_glyph::FontRef::try_from_slice(include_bytes!("../fonts/JetBrainsMono-Medium.ttf")).unwrap();
         (font.as_scaled(state.char_scale).ascent(), font.as_scaled(state.char_scale).descent(), font.as_scaled(state.char_scale).height())
     };
 
@@ -243,8 +250,6 @@ fn main() {
     let rect_renderer = RectRenderer::new(rect_shader);
 
     println!("font_height: {font_height}");
-    //let mut editor = Editor::from_path(Path::new(&"./src/main.rs"));
-    //let mut editor = Editor::from_path(Path::new(&"./test.txt"));
     let mut editor = if let Some(arg) = std::env::args().skip(1).next() {
         let p = Path::new(&arg);
         Editor::from_path(&p)
@@ -288,6 +293,29 @@ fn main() {
             start_line
         };
 
+        if editor.mode == EditorMode::Visual {
+            let start = editor.visual_range_anchor.min(editor.visual_range_moving);
+            let end = editor.visual_range_anchor.max(editor.visual_range_moving);
+
+            if start.line == end.line {
+                let rect = highlight_line(&state, start.col, end.col, start.line, start_line);
+                rect_renderer.draw_rect(&state, rect);
+            } else {
+                let line_len = editor.buffer.line_len(start.line).max(1);
+                let first = highlight_line(&state, start.col, line_len - 1, start.line, start_line);
+                rect_renderer.draw_rect(&state, first);
+
+                for line in (start.line + 1)..end.line {
+                    let line_len = editor.buffer.line_len(line).max(1);
+                    let rect = highlight_line(&state, 0, line_len - 1, line, start_line);
+                    rect_renderer.draw_rect(&state, rect);
+                }
+
+                let last = highlight_line(&state, 0, end.col, end.line, start_line);
+                rect_renderer.draw_rect(&state, last);
+            }
+        }
+
         let end_line = start_line + state.max_rows() + 1;
         for i in (start_line as usize)..(editor.buffer.total_lines().min(end_line as usize)) {
             let line = editor.buffer.line(i);
@@ -296,8 +324,14 @@ fn main() {
         }
 
         let (xpos, ypos) = state.cursor.to_screen_position(&state, start_line);
-        let rect = DrawRect::from_screen_points(&state, state.char_height, state.char_width, xpos, ypos, (1.0, 1.0, 1.0));
+        let rect = DrawRect::from_screen_points(&state, xpos, ypos, (1.0, 1.0, 1.0));
         rect_renderer.draw_rect(&state, rect);
+
+        //println!();
+        //for line in 0..editor.buffer.total_lines() {
+        //    println!("{line}: {:?}", editor.buffer.raw_line(line).as_bytes());
+        //}
+
 
         unsafe {
             gl::BindVertexArray(0);

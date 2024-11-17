@@ -30,6 +30,37 @@ impl LinePos {
     }
 }
 
+impl PartialEq for LinePos {
+    fn eq(&self, other: &Self) -> bool {
+        self.line == other.line && self.col == other.col
+    }
+}
+
+impl Eq for LinePos {}
+
+impl PartialOrd for LinePos {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        if self.line < other.line { return Some(std::cmp::Ordering::Less) }
+        if self.line > other.line { return Some(std::cmp::Ordering::Greater) }
+        if self.col < other.col { return Some(std::cmp::Ordering::Less) }
+        if self.col > other.col { return Some(std::cmp::Ordering::Greater) }
+
+        Some(std::cmp::Ordering::Equal)
+    }
+}
+
+impl Ord for LinePos {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        unsafe { self.partial_cmp(other).unwrap_unchecked() }
+    }
+}
+
+
+pub enum LineView<'a> {
+    Contiguous(&'a str),
+    Parts(&'a str, &'a str),
+}
+
 
 pub struct TextBuffer {
     pub chars: GapBuffer<u8>,
@@ -159,7 +190,7 @@ impl TextBuffer {
         let actual_index = self.screen_index_to_bytes_index(line, index);
         let mut actual_len = 0;
 
-        let iter = self.utf8_iter(LinePos{ line, col: index });
+        let iter = self.utf8_iter(LinePos{ line, col: 0 });
         for (i, char) in iter.enumerate() {
             if i >= index + len { break; }
             if i >= index { actual_len += char.len_utf8(); }
@@ -167,6 +198,28 @@ impl TextBuffer {
 
         self.chars.remove(start + actual_index, actual_len);
         self.lines.decrement_range_by((line + 1)..self.lines.len(), actual_len);
+    }
+
+    pub fn remove_by_range(&mut self, start: LinePos, end: LinePos) {
+        if start.line == end.line {
+            let line_len = self.line_len(start.line);
+            self.remove_from_line(start.line, start.col, (end.col - start.col + 1).min(line_len));
+            if end.col == line_len && self.total_lines() > 1 {
+                self.remove_line_sep(start.line);
+            }
+            return
+        }
+
+        let line_len = self.line_len(start.line);
+        self.remove_from_line(start.line, start.col, line_len - start.col);
+
+        self.remove_from_line(end.line, 0, end.col + 1);
+
+        for _ in (start.line + 1)..end.line {
+            self.remove_line(start.line + 1);
+        }
+
+        self.remove_line_sep(start.line);
     }
 
     pub fn remove_line(&mut self, line: usize) {
@@ -232,6 +285,7 @@ impl TextBuffer {
         utf8_rev_iter
     }
 
+    // zero indexed
     fn screen_index_to_bytes_index(&self, line: usize, index: usize) -> usize {
         let iter = self.utf8_iter(LinePos{ line, col: 0 });
         let mut actual_index = 0;
