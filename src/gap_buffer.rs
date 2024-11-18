@@ -213,13 +213,17 @@ impl TextBuffer {
         let line_len = self.line_len(start.line);
         self.remove_from_line(start.line, start.col, line_len - start.col);
 
-        self.remove_from_line(end.line, 0, end.col + 1);
+        let end_line_len = self.line_len(end.line);
+        self.remove_from_line(end.line, 0, (end.col + 1).min(end_line_len));
 
         for _ in (start.line + 1)..end.line {
             self.remove_line(start.line + 1);
         }
 
         self.remove_line_sep(start.line);
+        if end.col == end_line_len && self.total_lines() > 1 {
+            self.remove_line_sep(start.line);
+        }
     }
 
     pub fn remove_line(&mut self, line: usize) {
