@@ -81,7 +81,7 @@ impl Editor {
             }
         } else if self.mode == EditorMode::Normal {
             for char in state.io.chars.chars() {
-                let Some(cmd) = NormalCmd::from_char(&self.normal_commands, char) else { continue; };
+                let Some(cmd) = NormalCmd::from_char(&mut self.normal_commands, char) else { continue; };
                 self.normal_commands.push(cmd);
             }
             self.execute_normal_commands(state);

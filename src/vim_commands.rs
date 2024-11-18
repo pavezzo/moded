@@ -2,41 +2,62 @@ use crate::{gap_buffer::{LinePos, TextBuffer}, State};
 
 
 
-#[repr(u8)]
 #[derive(PartialEq, Eq, Debug)]
 pub enum NormalCmd {
     Append,
     Around,
-    Inside,
+    BackWord,
+    Char(char),
     Delete,
     Down,
     Insert, 
+    Inside,
     Left,
     LineEnd,
     LineStart,
     Right,
+    SeekBackward,
+    SeekForward,
+    TillBackward,
+    TillForward,
+    Count(u32),
     Up,
-    Word,
-    BackWord,
-    WORD,
-    Xdel,
     Visual,
     VisualLine,
+    WORD,
+    Word,
+    Xdel,
 }
 
 
 impl NormalCmd {
-    pub fn from_char(previous: &[NormalCmd], ch: char) -> Option<Self> {
+    pub fn from_char(previous: &mut [NormalCmd], ch: char) -> Option<Self> {
         match ch {
             '$' => Some(NormalCmd::LineEnd),
-            '0' => Some(NormalCmd::LineStart),
+            '1' .. '9' => {
+                match previous.last() {
+                    Some(NormalCmd::Count(n)) => {
+                        previous[previous.len()-1] = NormalCmd::Count(n * 10 + (ch as u32 - '0' as u32));
+                        None
+                    },
+                    _ => Some(NormalCmd::Count(ch as u32 - '0' as u32)),
+                }
+            },
+            '0' => {
+                match previous.last() {
+                    Some(NormalCmd::Count(n)) => {
+                        previous[previous.len()-1] = NormalCmd::Count(n * 10);
+                        None
+                    },
+                    _ => Some(NormalCmd::LineStart),
+                }
+            },
             'a' => {
                 match previous.last() {
                     Some(NormalCmd::Delete) => Some(NormalCmd::Around),
                     None => Some(NormalCmd::Append),
                     _ => None,
                 }
-                
             },
             'b' => Some(NormalCmd::BackWord),
             'd' => Some(NormalCmd::Delete),
