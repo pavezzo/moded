@@ -135,7 +135,7 @@ impl CursorPos {
         let xpos = (self.x - 1) as f32 * state.char_width;
         let ypos = state.height as f32 - ((self.y - start_line) as f32 * state.char_height);
         
-        return (xpos, ypos);
+        (xpos, ypos)
     }
 
     pub fn to_linepos(&self) -> LinePos {
@@ -294,8 +294,9 @@ fn main() {
         };
 
         if editor.mode == EditorMode::Visual {
-            let start = editor.visual_range_anchor.min(editor.visual_range_moving);
-            let end = editor.visual_range_anchor.max(editor.visual_range_moving);
+            let cursor = state.cursor.to_linepos();
+            let start = editor.visual_range_anchor.min(cursor);
+            let end = editor.visual_range_anchor.max(cursor);
 
             if start.line == end.line {
                 let rect = highlight_line(&state, start.col, end.col, start.line, start_line);

@@ -1,9 +1,9 @@
-use crate::{gap_buffer::{LinePos, TextBuffer}, State};
+use crate::{editor::EditorMode, gap_buffer::{LinePos, TextBuffer}, State};
 
 
 
 #[derive(PartialEq, Eq, Debug)]
-pub enum NormalCmd {
+pub enum MotionCmd {
     Append,
     Around,
     BackWord,
@@ -22,109 +22,85 @@ pub enum NormalCmd {
     TillForward,
     Count(u32),
     Up,
-    Visual,
-    VisualLine,
+    NormalMode,
+    VisualMode,
+    VisualLineMode,
     WORD,
     Word,
     Xdel,
 }
 
 
-impl NormalCmd {
-    pub fn from_char(previous: &mut [NormalCmd], ch: char) -> Option<Self> {
+impl MotionCmd {
+    pub fn from_char(previous: &mut [MotionCmd], ch: char, current_mode: EditorMode) -> Option<Self> {
         match ch {
-            '$' => Some(NormalCmd::LineEnd),
+            '$' => Some(MotionCmd::LineEnd),
             '1' .. '9' => {
                 match previous.last() {
-                    Some(NormalCmd::Count(n)) => {
-                        previous[previous.len()-1] = NormalCmd::Count(n * 10 + (ch as u32 - '0' as u32));
+                    Some(MotionCmd::Count(n)) => {
+                        previous[previous.len()-1] = MotionCmd::Count(n * 10 + (ch as u32 - '0' as u32));
                         None
                     },
-                    _ => Some(NormalCmd::Count(ch as u32 - '0' as u32)),
+                    _ => Some(MotionCmd::Count(ch as u32 - '0' as u32)),
                 }
             },
             '0' => {
                 match previous.last() {
-                    Some(NormalCmd::Count(n)) => {
-                        previous[previous.len()-1] = NormalCmd::Count(n * 10);
+                    Some(MotionCmd::Count(n)) => {
+                        previous[previous.len()-1] = MotionCmd::Count(n * 10);
                         None
                     },
-                    _ => Some(NormalCmd::LineStart),
+                    _ => Some(MotionCmd::LineStart),
                 }
             },
             'a' => {
+                if current_mode == EditorMode::Visual {
+                    return Some(MotionCmd::Around)
+                }
                 match previous.last() {
-                    Some(NormalCmd::Delete) => Some(NormalCmd::Around),
-                    None => Some(NormalCmd::Append),
+                    Some(MotionCmd::Delete) => Some(MotionCmd::Around),
+                    None => Some(MotionCmd::Append),
                     _ => None,
                 }
             },
-            'b' => Some(NormalCmd::BackWord),
-            'd' => Some(NormalCmd::Delete),
-            'h' => Some(NormalCmd::Left),
+            'b' => Some(MotionCmd::BackWord),
+            'd' => Some(MotionCmd::Delete),
+            'h' => Some(MotionCmd::Left),
             'i' => {
+                if current_mode == EditorMode::Visual {
+                    return Some(MotionCmd::Inside)
+                }
                 match previous.last() {
-                    Some(NormalCmd::Delete) => Some(NormalCmd::Inside),
-                    None => Some(NormalCmd::Insert),
+                    Some(MotionCmd::Delete) => Some(MotionCmd::Inside),
+                    None => Some(MotionCmd::Insert),
                     _ => None,
                 }
             },
-            'j' => Some(NormalCmd::Down),
-            'k' => Some(NormalCmd::Up),
-            'l' => Some(NormalCmd::Right),
-            'v' => Some(NormalCmd::Visual),
-            'V' => Some(NormalCmd::VisualLine),
-            'w' => Some(NormalCmd::Word),
-            'W' => Some(NormalCmd::WORD),
-            'x' => Some(NormalCmd::Xdel),
+            'j' => Some(MotionCmd::Down),
+            'k' => Some(MotionCmd::Up),
+            'l' => Some(MotionCmd::Right),
+            'v' => {
+                if current_mode == EditorMode::Visual {
+                    return Some(MotionCmd::NormalMode)
+                }
+                Some(MotionCmd::VisualMode)
+            },
+            'V' => Some(MotionCmd::VisualLineMode),
+            'w' => Some(MotionCmd::Word),
+            'W' => Some(MotionCmd::WORD),
+            'x' => {
+                if current_mode == EditorMode::Visual {
+                    return Some(MotionCmd::Delete)
+                }
+                Some(MotionCmd::Xdel)
+            },
             _ => None,
         }
     }
 }
-
-#[repr(u8)]
-#[derive(PartialEq, Eq, Debug)]
-pub enum VisualCmd {
-    Around,
-    BackWord,
-    Delete,
-    Down,
-    Inside,
-    Left,
-    LineEnd,
-    LineStart,
-    NormalMode,
-    Right,
-    Up,
-    WORD,
-    Word,
-}
-
-impl VisualCmd {
-    pub fn from_char(_previous: &[VisualCmd], ch: char) -> Option<VisualCmd> {
-        match ch {
-            '$' => Some(VisualCmd::LineEnd),
-            '0' => Some(VisualCmd::LineStart),
-            'a' => Some(VisualCmd::Around),
-            'b' => Some(VisualCmd::BackWord),
-            'd' => Some(VisualCmd::Delete),
-            'h' => Some(VisualCmd::Left),
-            'i' => Some(VisualCmd::Inside),
-            'j' => Some(VisualCmd::Down),
-            'k' => Some(VisualCmd::Up),
-            'l' => Some(VisualCmd::Right),
-            'v' => Some(VisualCmd::NormalMode),
-            'w' => Some(VisualCmd::Word),
-            'W' => Some(VisualCmd::WORD),
-            'x' => Some(VisualCmd::Delete),
-            _ => None,
-        }
-    }
-}
-
 
 pub fn find_next_word_start(state: &State, buf: &TextBuffer) -> Option<LinePos> {
-    let mut pos = LinePos { line: state.cursor.y - 1, col: state.cursor.x - 1 };
+    let pos = LinePos { line: state.cursor.y - 1, col: state.cursor.x - 1 };
     let mut iter = buf.utf8_iter(pos);
 
     if let Some(c) = iter.next() {
