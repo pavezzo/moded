@@ -27,6 +27,7 @@ pub enum MotionCmd {
     VisualLineMode,
     WORD,
     Word,
+    WordEnd,
     Xdel,
 }
 
@@ -65,6 +66,7 @@ impl MotionCmd {
             },
             'b' => Some(MotionCmd::BackWord),
             'd' => Some(MotionCmd::Delete),
+            'e' => Some(MotionCmd::WordEnd),
             'h' => Some(MotionCmd::Left),
             'i' => {
                 if current_mode == EditorMode::Visual {
@@ -99,13 +101,25 @@ impl MotionCmd {
     }
 }
 
-pub fn find_next_word_start(state: &State, buf: &TextBuffer) -> Option<LinePos> {
-    let pos = LinePos { line: state.cursor.y - 1, col: state.cursor.x - 1 };
-    let mut iter = buf.utf8_iter(pos);
+type BufferCmd = fn(LinePos, &TextBuffer) -> Option<LinePos>;
+pub fn count(cursor: LinePos, buf: &TextBuffer, count: u32, f: BufferCmd) -> Option<LinePos> {
+    let mut last_pos = None;
+    let mut cursor = cursor;
+    for _ in 0..count {
+        let Some(pos) = f(cursor, buf) else { return last_pos };
+        cursor = pos;
+        last_pos = Some(pos);
+    }
+
+    last_pos
+}
+
+pub fn find_next_word_start(cursor: LinePos, buf: &TextBuffer) -> Option<LinePos> {
+    let mut iter = buf.utf8_iter(cursor);
 
     if let Some(c) = iter.next() {
         let mut line_add = 0;
-        let mut col = pos.col as isize;
+        let mut col = cursor.col as isize;
         let mut found = false;
 
         if c.is_alphanumeric() || c == '_' {
@@ -153,7 +167,7 @@ pub fn find_next_word_start(state: &State, buf: &TextBuffer) -> Option<LinePos> 
         }
 
         if found {
-            return Some(LinePos { line: state.cursor.y - 1 + line_add, col: col as usize })
+            return Some(LinePos { line: cursor.line + line_add, col: col as usize })
         }
     }
 
@@ -162,13 +176,12 @@ pub fn find_next_word_start(state: &State, buf: &TextBuffer) -> Option<LinePos> 
 
 
 #[allow(non_snake_case)]
-pub fn find_next_WORD_start(state: &State, buf: &TextBuffer) -> Option<LinePos> {
-    let pos = LinePos { line: state.cursor.y - 1, col: state.cursor.x - 1 };
-    let mut iter = buf.utf8_iter(pos);
+pub fn find_next_WORD_start(cursor: LinePos, buf: &TextBuffer) -> Option<LinePos> {
+    let mut iter = buf.utf8_iter(cursor);
 
     if let Some(c) = iter.next() {
         let mut line_add = 0;
-        let mut col = pos.col as isize;
+        let mut col = cursor.col as isize;
         let mut found = false;
 
         let mut found_whitespace = false;
@@ -191,7 +204,7 @@ pub fn find_next_WORD_start(state: &State, buf: &TextBuffer) -> Option<LinePos> 
         }
 
         if found {
-            return Some(LinePos { line: state.cursor.y - 1 + line_add, col: col as usize })
+            return Some(LinePos { line: cursor.line + line_add, col: col as usize })
         }
     }
 
@@ -199,11 +212,10 @@ pub fn find_next_WORD_start(state: &State, buf: &TextBuffer) -> Option<LinePos> 
 }
 
 
-pub fn find_current_word_start(state: &State, buf: &TextBuffer) -> Option<LinePos> {
-    let pos = LinePos { line: state.cursor.y - 1, col: state.cursor.x - 1 };
-    let iter = buf.utf8_rev_iter(pos);
+pub fn find_current_word_start(cursor: LinePos, buf: &TextBuffer) -> Option<LinePos> {
+    let iter = buf.utf8_rev_iter(cursor);
 
-    let mut col = pos.col;
+    let mut col = cursor.col;
     let mut looking_for_letter = false;
     let mut looking_for_whitespace = false;
     let mut looking_for_special = false;
@@ -212,7 +224,7 @@ pub fn find_current_word_start(state: &State, buf: &TextBuffer) -> Option<LinePo
             break; 
         }
 
-        if col == pos.col {
+        if col == cursor.col {
             if is_letter(char) {
                 looking_for_whitespace = true;
                 looking_for_special = true;
@@ -242,15 +254,14 @@ pub fn find_current_word_start(state: &State, buf: &TextBuffer) -> Option<LinePo
         col -= 1;
     }
 
-    return Some(LinePos { line: pos.line, col })
+    return Some(LinePos { line: cursor.line, col })
 }
 
 
-pub fn find_current_word_end(state: &State, buf: &TextBuffer) -> Option<LinePos> {
-    let pos = LinePos { line: state.cursor.y - 1, col: state.cursor.x - 1 };
-    let iter = buf.utf8_iter(pos);
+pub fn find_current_word_end(cursor: LinePos, buf: &TextBuffer) -> Option<LinePos> {
+    let iter = buf.utf8_iter(cursor);
 
-    let mut col = pos.col;
+    let mut col = cursor.col;
     let mut looking_for_letter = false;
     let mut looking_for_whitespace = false;
     let mut looking_for_special = false;
@@ -259,7 +270,7 @@ pub fn find_current_word_end(state: &State, buf: &TextBuffer) -> Option<LinePos>
             break; 
         }
 
-        if col == pos.col {
+        if col == cursor.col {
             if is_letter(char) {
                 looking_for_whitespace = true;
                 looking_for_special = true;
@@ -291,23 +302,22 @@ pub fn find_current_word_end(state: &State, buf: &TextBuffer) -> Option<LinePos>
 
     col -= 1;
 
-    return Some(LinePos { line: pos.line, col })
+    return Some(LinePos { line: cursor.line, col })
 }
 
 
 #[allow(non_snake_case)]
-pub fn find_current_WORD_start(state: &State, buf: &TextBuffer) -> Option<LinePos> {
-    let pos = LinePos { line: state.cursor.y - 1, col: state.cursor.x - 1 };
-    let iter = buf.utf8_rev_iter(pos);
+pub fn find_current_WORD_start(cursor: LinePos, buf: &TextBuffer) -> Option<LinePos> {
+    let iter = buf.utf8_rev_iter(cursor);
 
-    let mut col = pos.col;
+    let mut col = cursor.col;
     let mut looking_for_whitespace = true;
     for char in iter {
         if char == '\r' || char == '\n' { 
             break; 
         }
         
-        if col == pos.col && char.is_whitespace() {
+        if col == cursor.col && char.is_whitespace() {
             looking_for_whitespace = false;
         }
 
@@ -324,23 +334,22 @@ pub fn find_current_WORD_start(state: &State, buf: &TextBuffer) -> Option<LinePo
         col -= 1;
     }
 
-    return Some(LinePos { line: pos.line, col })
+    return Some(LinePos { line: cursor.line, col })
 }
 
 
 #[allow(non_snake_case)]
-pub fn find_current_WORD_end(state: &State, buf: &TextBuffer) -> Option<LinePos> {
-    let pos = LinePos { line: state.cursor.y - 1, col: state.cursor.x - 1 };
-    let iter = buf.utf8_iter(pos);
+pub fn find_current_WORD_end(cursor: LinePos, buf: &TextBuffer) -> Option<LinePos> {
+    let iter = buf.utf8_iter(cursor);
 
-    let mut col = pos.col;
+    let mut col = cursor.col;
     let mut looking_for_whitespace = true;
     for char in iter {
         if char == '\r' || char == '\n' { 
             break; 
         }
 
-        if col == pos.col && char.is_whitespace() {
+        if col == cursor.col && char.is_whitespace() {
             looking_for_whitespace = false;
         }
 
@@ -360,13 +369,13 @@ pub fn find_current_WORD_end(state: &State, buf: &TextBuffer) -> Option<LinePos>
 
     col -= 1;
 
-    return Some(LinePos { line: pos.line, col })
+    return Some(LinePos { line: cursor.line, col })
 }
 
 
-pub fn find_previous_word_start(state: &State, buf: &TextBuffer) -> Option<LinePos> {
-    let mut line = state.cursor.y - 1;
-    let mut col = state.cursor.x - 1;
+pub fn find_previous_word_start(cursor: LinePos, buf: &TextBuffer) -> Option<LinePos> {
+    let mut line = cursor.line;
+    let mut col = cursor.col;
 
     if col > 0 {
         col -= 1;
@@ -374,7 +383,7 @@ pub fn find_previous_word_start(state: &State, buf: &TextBuffer) -> Option<LineP
         if line == 0 {
             return None
         }
-        let line_len = buf.line_len(state.cursor.y - 2);
+        let line_len = buf.line_len(cursor.line - 1);
         line -= 1;
         col = line_len;
     }
@@ -429,9 +438,9 @@ pub fn find_previous_word_start(state: &State, buf: &TextBuffer) -> Option<LineP
 }
 
 
-pub fn find_next_word_end(state: &State, buf: &TextBuffer) -> Option<LinePos> {
-    let mut line = state.cursor.y - 1;
-    let mut col = state.cursor.x - 1;
+pub fn find_next_word_end(cursor: LinePos, buf: &TextBuffer) -> Option<LinePos> {
+    let mut line = cursor.line;
+    let mut col = cursor.col;
 
     let line_len = buf.line_len(line);
     if col < line_len - 1 {
