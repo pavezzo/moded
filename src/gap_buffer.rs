@@ -165,23 +165,23 @@ impl TextBuffer {
         self.lines.increment_range_by((line + 1)..self.lines.len(), data.len());
     }
 
-    pub fn insert_empty_line(&mut self, row: usize) {
-        if row < self.total_lines() {
-            let index = self.lines.get_one(row);
+    pub fn insert_empty_line(&mut self, line: usize) {
+        if line < self.total_lines() {
+            let index = self.lines.get_one(line);
             self.chars.insert(index, self.line_sep.as_str().as_bytes());
-            self.lines.insert(row, &[index]);
-            self.lines.increment_range_by((row+1)..self.lines.len(), self.line_sep as usize);
+            self.lines.insert(line, &[index]);
+            self.lines.increment_range_by((line+1)..self.lines.len(), self.line_sep as usize);
             return;
         }
 
-        if row == self.total_lines() && !self.raw_line(row - 1).ends_with(self.line_sep.as_str()) {
-            self.insert_into_line(row - 1, self.raw_line_len(row - 1), self.line_sep.as_str().as_bytes());
+        if line == self.total_lines() && !self.raw_line(line - 1).ends_with(self.line_sep.as_str()) {
+            self.insert_into_line(line - 1, self.raw_line_len(line - 1), self.line_sep.as_str().as_bytes());
         }
 
-        let index = self.lines.get_one(row - 1) + self.raw_line_len(row - 1);
+        let index = self.lines.get_one(line - 1) + self.raw_line_len(line - 1);
         self.chars.insert(index, self.line_sep.as_str().as_bytes());
-        let before = self.lines.get_one(row - 1) + self.raw_line_len(row - 1) - self.line_sep as usize;
-        self.lines.insert(row, &[before]);
+        let before = self.lines.get_one(line - 1) + self.raw_line_len(line - 1) - self.line_sep as usize;
+        self.lines.insert(line, &[before]);
     }
 
     pub fn remove_from_line(&mut self, line: usize, index: usize, len: usize) {
@@ -407,8 +407,7 @@ impl<T: Copy + Debug + std::ops::Add + std::ops::AddAssign + std::ops::SubAssign
     }
 
     pub fn insert(&mut self, index: usize, data: &[T]) {
-        //assert!(index <= self.data.len() - (self.gap_end - self.gap_start));
-
+        //assert!(index <= self.data.len() - (self.gap_end - self.gap_start), "index: {index}");
         let mut gap_size = self.gap_end - self.gap_start;
 
         if gap_size < data.len() {
