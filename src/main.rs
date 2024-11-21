@@ -145,6 +145,12 @@ impl CursorPos {
     pub fn to_line_col(&self) -> (usize, usize) {
         (self.y - 1, self.x - 1)
     }
+
+    pub fn from_linepos(&mut self, pos: LinePos) {
+        self.x = pos.col + 1;
+        self.y = pos.line + 1;
+        self.wanted_x = self.x;
+    }
 }
 
 pub struct State {
