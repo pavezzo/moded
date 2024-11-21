@@ -243,7 +243,7 @@ impl TextBuffer {
         let len = self.raw_line_len(line);
         self.chars.remove(start + len - self.line_sep as usize, self.line_sep as usize);
         self.lines.decrement_range_by((line + 1)..self.lines.len(), self.line_sep as usize);
-        self.lines.remove(line + 1, 1);
+        self.lines.remove(line, 1);
     }
 
     pub fn split_line_at_index(&mut self, line: usize, index: usize) {
