@@ -1,7 +1,6 @@
 use crate::{editor::EditorMode, gap_buffer::{LinePos, TextBuffer}, State};
 
 
-
 #[derive(PartialEq, Eq, Debug)]
 pub enum MotionCmd {
     Append,
@@ -10,6 +9,8 @@ pub enum MotionCmd {
     Char(char),
     Delete,
     Down,
+    Goto,
+    GOTO,
     Insert, 
     Inside,
     Left,
@@ -25,6 +26,7 @@ pub enum MotionCmd {
     NormalMode,
     VisualMode,
     VisualLineMode,
+    CommandBarMode,
     WORD,
     Word,
     WordEnd,
@@ -36,7 +38,7 @@ impl MotionCmd {
     pub fn from_char(previous: &mut [MotionCmd], ch: char, current_mode: EditorMode) -> Option<Self> {
         match ch {
             '$' => Some(MotionCmd::LineEnd),
-            '1' .. '9' => {
+            '1' ..= '9' => {
                 match previous.last() {
                     Some(MotionCmd::Count(n)) => {
                         previous[previous.len()-1] = MotionCmd::Count(n * 10 + (ch as u32 - '0' as u32));
@@ -67,6 +69,8 @@ impl MotionCmd {
             'b' => Some(MotionCmd::BackWord),
             'd' => Some(MotionCmd::Delete),
             'e' => Some(MotionCmd::WordEnd),
+            'g' => Some(MotionCmd::Goto),
+            'G' => Some(MotionCmd::GOTO),
             'h' => Some(MotionCmd::Left),
             'i' => {
                 if current_mode == EditorMode::Visual {
@@ -87,7 +91,12 @@ impl MotionCmd {
                 }
                 Some(MotionCmd::VisualMode)
             },
-            'V' => Some(MotionCmd::VisualLineMode),
+            'V' => {
+                if current_mode == EditorMode::VisualLine {
+                    return Some(MotionCmd::NormalMode)
+                }
+                Some(MotionCmd::VisualLineMode)
+            },
             'w' => Some(MotionCmd::Word),
             'W' => Some(MotionCmd::WORD),
             'x' => {
@@ -96,6 +105,7 @@ impl MotionCmd {
                 }
                 Some(MotionCmd::Xdel)
             },
+            ':' => Some(MotionCmd::CommandBarMode),
             _ => None,
         }
     }
@@ -469,6 +479,11 @@ pub fn find_next_word_end(cursor: LinePos, buf: &TextBuffer) -> Option<LinePos> 
     } else {
         found = true;
         looking_for_special = true;
+    }
+
+    if char == '\n' {
+        line += 1;
+        col = 0;
     }
 
     for char in iter {

@@ -9,7 +9,7 @@ use std::path::Path;
 
 use editor::{Editor, EditorMode};
 use font::CharacterCache;
-use gap_buffer::LinePos;
+use gap_buffer::{LinePos, LineView};
 use glfw::{self};
 use glfw::Context;
 use gl::{self};
@@ -123,6 +123,7 @@ impl Io {
 }
 
 
+#[derive(Debug)]
 pub struct CursorPos {
     pub x: usize,
     pub y: usize,
@@ -162,6 +163,7 @@ pub struct State {
     pub char_width: f32,
     pub char_height: f32,
     pub cursor: CursorPos,
+    pub cmd_bar_cursor_x: usize,
 }
 
 impl State {
@@ -241,7 +243,7 @@ fn main() {
     let text_shader = TextShader::new(TEXT_VERTEX_SHADER_SOURCE, TEXT_FRAGMENT_SHADER_SOURCE).unwrap();
     let rect_shader = RectShader::new(RECT_VERTEX_SHADER_SOURCE, RECT_FRAGMENT_SHADER_SOURCE).unwrap();
 
-    let mut state = State { width: screen_width as i32 / 2, height: screen_height as i32 / 2, window_changed_size: true, char_scale: 50.0, char_width: 0.0, char_height: 0.0, cursor: CursorPos {x: 1, y: 1, wanted_x: 1}, io: Io { chars: String::new(), special_keys: Vec::new(), modifiers: glfw::Modifiers::empty() } };
+    let mut state = State { width: screen_width as i32 / 2, height: screen_height as i32 / 2, window_changed_size: true, char_scale: 45.0, char_width: 0.0, char_height: 0.0, cursor: CursorPos {x: 1, y: 1, wanted_x: 1}, io: Io { chars: String::new(), special_keys: Vec::new(), modifiers: glfw::Modifiers::empty() }, cmd_bar_cursor_x: 0 };
 
     let char_cache = CharacterCache::from_font_bytes(&state, include_bytes!("../fonts/JetBrainsMono-Medium.ttf"));
     state.char_width = char_cache.get('W').unwrap().width;
@@ -289,12 +291,17 @@ fn main() {
             window.set_should_close(true);
         }
 
+        if state.io.pressed_char_and_special('s', SpecialKey::Control) {
+            editor.save_to_file();
+        }
+
         editor.handle_input(&mut state);
 
         start_line = if state.cursor.y > start_line && state.cursor.y - start_line > state.max_rows() {
             state.cursor.y - state.max_rows()
         } else if state.cursor.y <= start_line {
-            start_line - 1
+            //start_line - 1
+            state.cursor.y - 1
         } else {
             start_line
         };
@@ -321,6 +328,16 @@ fn main() {
                 let last = highlight_line(&state, 0, end.col, end.line, start_line);
                 rect_renderer.draw_rect(&state, last);
             }
+        } else if editor.mode == EditorMode::VisualLine {
+            let cursor = state.cursor.to_linepos().line;
+            let start = editor.visual_range_anchor.line.min(cursor);
+            let end = editor.visual_range_anchor.line.max(cursor);
+
+            for line in start..(end + 1) {
+                let line_len = editor.buffer.line_len(line).max(1);
+                let rect = highlight_line(&state, 0, line_len - 1, line, start_line);
+                rect_renderer.draw_rect(&state, rect);
+            }
         }
 
         let end_line = start_line + state.max_rows() + 1;
@@ -330,15 +347,27 @@ fn main() {
             text_renderer.draw_line(&state, draw_line);
         }
 
-        let (xpos, ypos) = state.cursor.to_screen_position(&state, start_line);
-        let rect = DrawRect::from_screen_points(&state, xpos, ypos, (1.0, 1.0, 1.0));
-        rect_renderer.draw_rect(&state, rect);
+        if editor.mode == EditorMode::CommandBar {
+            let line_len = state.max_cols();
+            let rect = highlight_line(&state, 0, line_len, start_line, start_line);
+            rect_renderer.draw_rect(&state, rect);
+            let draw_line = DrawLine::new(&editor.command_bar_input, 1, (1.0, 1.0, 0.0));
+            text_renderer.draw_line(&state, draw_line);
+            let xpos = state.cmd_bar_cursor_x as f32 * state.char_width;
+            let ypos = state.height as f32 - (1f32 * state.char_height);
+            let rect = DrawRect::from_screen_points(&state, xpos, ypos, (1.0, 1.0, 1.0));
+            rect_renderer.draw_rect(&state, rect);
+        } else {
+            let (xpos, ypos) = state.cursor.to_screen_position(&state, start_line);
+            let rect = DrawRect::from_screen_points(&state, xpos, ypos, (1.0, 1.0, 1.0));
+            rect_renderer.draw_rect(&state, rect);
+        }
+
 
         //println!();
         //for line in 0..editor.buffer.total_lines() {
         //    println!("{line}: {:?}", editor.buffer.raw_line(line).as_bytes());
         //}
-
 
         unsafe {
             gl::BindVertexArray(0);

@@ -1,14 +1,16 @@
-use std::{fs, io::{self, Read}, path::{Path, PathBuf}};
+use std::{fs, io::{self, Read, Write}, path::{Path, PathBuf}};
 
 use glfw::CursorMode;
 
-use crate::{gap_buffer::{LinePos, TextBuffer}, vim_commands::*, SpecialKey, State};
+use crate::{gap_buffer::{LinePos, LineView, TextBuffer}, vim_commands::*, SpecialKey, State};
 
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum EditorMode {
     Insert,
     Normal,
     Visual,
+    VisualLine,
+    CommandBar,
 }
 
 pub struct Editor {
@@ -17,6 +19,7 @@ pub struct Editor {
     pub mode: EditorMode,
     pub motion_commands: Vec<MotionCmd>,
     pub visual_range_anchor: LinePos,
+    pub command_bar_input: String,
 }
 
 
@@ -35,9 +38,24 @@ impl Editor {
                 mode: EditorMode::Normal,
                 motion_commands: Vec::new(),
                 visual_range_anchor: LinePos { line: 0, col: 0 },
+                command_bar_input: String::new(),
             }
         }
         todo!();
+    }
+
+    pub fn save_to_file(&self) {
+        let view = self.buffer.full_view();
+        let mut file = std::fs::File::create(&self.file_path).unwrap();
+        match view {
+            LineView::Contiguous(s) => {
+                file.write_all(s.as_bytes());
+            },
+            LineView::Parts(s1, s2) => {
+                file.write_all(s1.as_bytes());
+                file.write_all(s2.as_bytes());
+            },
+        }
     }
 
     pub fn handle_input(&mut self, state: &mut State) {
@@ -76,6 +94,24 @@ impl Editor {
                     state.cursor.wanted_x = state.cursor.x;
                     state.cursor.y -= 1;
                 }
+            }
+        } else if self.mode == EditorMode::CommandBar {
+            if !state.io.chars.is_empty() {
+                self.command_bar_input.push_str(&state.io.chars);
+                state.cmd_bar_cursor_x += 1;
+            }
+            if state.io.pressed_special(SpecialKey::Enter) {
+                println!("executing cmd: {}", self.command_bar_input);
+                state.cmd_bar_cursor_x = 1;
+                self.command_bar_input.clear();
+                self.mode = EditorMode::Normal;
+            }
+            if state.io.pressed_special(SpecialKey::Backspace) {
+                self.command_bar_input.pop();
+                state.cmd_bar_cursor_x -= 1;
+            }
+            if self.command_bar_input.is_empty() {
+                self.mode = EditorMode::Normal;
             }
         } else {
             for char in state.io.chars.chars() {
@@ -366,10 +402,28 @@ impl Editor {
                         let min = self.visual_range_anchor.min(cursor);
                         let max = self.visual_range_anchor.max(cursor);
                         self.buffer.remove_by_range(min, max);
-                        self.mode = EditorMode::Normal;
 
                         state.cursor.from_linepos(min);
 
+                        self.mode = EditorMode::Normal;
+                        executed += 1;
+                        continue
+                    }
+
+                    if self.mode == EditorMode::VisualLine {
+                        let cursor = state.cursor.to_linepos();
+                        let mut start = self.visual_range_anchor.min(cursor);
+                        let end = self.visual_range_anchor.max(cursor);
+                        for _ in start.line..(end.line + 1) {
+                            self.buffer.remove_line(start.line);
+                        }
+
+                        start.line = start.line.min(self.buffer.total_lines() - 1);
+                        let line_len = self.buffer.line_len(start.line);
+                        start.col = start.col.min(line_len);
+                        state.cursor.from_linepos(start);
+                        
+                        self.mode = EditorMode::Normal;
                         executed += 1;
                         continue
                     }
@@ -398,6 +452,101 @@ impl Editor {
 
                     executed += 1;
                 },
+                MotionCmd::VisualLineMode => {
+                    self.mode = EditorMode::VisualLine;
+                    let cursor = state.cursor.to_linepos();
+                    self.visual_range_anchor = cursor;
+
+                    executed += 1;
+                },
+                MotionCmd::Goto => {
+                    let (prev1, prev2) = two_previous_cmds!();
+                    match prev2 {
+                        Some(MotionCmd::Goto) => {
+                            match prev1 {
+                                None => {
+                                    let line_len = self.buffer.line_len(0);
+                                    state.cursor.y = 1;
+                                    state.cursor.x = state.cursor.x.min(line_len);
+                                    state.cursor.wanted_x = state.cursor.x;
+                                    executed += 2;
+                                    continue
+                                },
+                                Some(MotionCmd::Count(n)) => {
+                                    let n = *n as usize;
+                                    let total_lines = self.buffer.total_lines();
+                                    let line = n.min(total_lines);
+                                    let line_len = self.buffer.line_len(line - 1);
+                                    state.cursor.y = line;
+                                    state.cursor.x = state.cursor.x.min(line_len + 1);
+                                    state.cursor.wanted_x = state.cursor.x;
+                                    executed += 3;
+                                    continue
+                                }
+                                _ => continue,
+                            }
+                        },
+                        _ => continue,
+                    }
+                }
+                MotionCmd::GOTO => {
+                    let prev = previous_cmd!();
+                    match prev {
+                        None => {
+                            let mut cursor = state.cursor.to_linepos();
+                            let last_line = self.buffer.total_lines() - 1;
+                            let line_len = self.buffer.line_len(last_line);
+                            cursor.line = last_line;
+                            cursor.col = cursor.col.min(line_len);
+                            state.cursor.from_linepos(cursor);
+                            executed += 1;
+                            continue
+                        },
+                        Some(MotionCmd::Count(n)) => {
+                            let n = *n as usize;
+                            let total_lines = self.buffer.total_lines();
+                            let line = n.min(total_lines);
+                            let line_len = self.buffer.line_len(line - 1);
+                            state.cursor.y = line;
+                            state.cursor.x = state.cursor.x.min(line_len);
+                            state.cursor.wanted_x = state.cursor.x;
+                            executed += 2;
+                            continue
+                        },
+                        _ => continue,
+                    }
+                },
+                MotionCmd::WordEnd => {
+                    let prev = previous_cmd!();
+                    match prev {
+                        None => {
+                            let cursor = state.cursor.to_linepos();
+                            let Some(pos) = find_next_word_end(cursor, &self.buffer) else { executed += 1; continue };
+                            state.cursor.from_linepos(pos);
+                            executed += 1;
+                            continue
+                        },
+                        Some(MotionCmd::Count(n)) => {
+                            let cursor = state.cursor.to_linepos();
+                            let Some(pos) = count(cursor, &self.buffer, *n, find_next_word_end) else { executed += 2; continue };
+                            state.cursor.from_linepos(pos);
+                            executed += 2;
+                            continue
+                        },
+                        Some(MotionCmd::Delete) => {
+                            //let cursor = state.cursor.to_linepos();
+                            //let Some(pos) = find_next_word_end(cursor, &self.buffer) else { executed += 1; continue };
+                        },
+                        _ => continue,
+                    }
+                },
+                MotionCmd::CommandBarMode => {
+                    self.mode = EditorMode::CommandBar;
+                    self.command_bar_input.push(':');
+                    state.cmd_bar_cursor_x = 1;
+                    executed += 1;
+                    continue
+                }
                 MotionCmd::Inside => continue,
                 MotionCmd::Count(_) => continue,
                 _ => todo!("{:?}", cmd),

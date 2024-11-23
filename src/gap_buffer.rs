@@ -91,6 +91,25 @@ impl TextBuffer {
         Self { chars: GapBuffer::new(chars), lines, line_sep }
     }
 
+    pub fn full_view(&self) -> LineView {
+        let first = &self.chars.data[0..self.chars.gap_start];
+        let first = unsafe { std::str::from_utf8_unchecked(first) };
+
+        if first.len() == self.chars.len() {
+            return LineView::Contiguous(first);
+        }
+
+        let second = &self.chars.data[self.chars.gap_end..self.chars.data.len()];
+        let second = unsafe { std::str::from_utf8_unchecked(second) };
+
+        LineView::Parts(first, second)
+    }
+
+    //pub fn line_view(&self, line: usize) -> LineView {
+    //    let start = self.lines.get_one(line);
+    //    let len = self.raw_line_len(line);
+    //}
+
     // TODO: maybe make this work with references
     pub fn line(&self, line: usize) -> String {
         let start = self.lines.get_one(line);
@@ -580,7 +599,6 @@ impl<T: Copy + Debug + std::ops::Add + std::ops::AddAssign + std::ops::SubAssign
         //println!("moving: from: {from}, to: {to}, len: {len}, data.len: {}, gap_start: {}, gap_end: {}, data: {:?}", self.data.len(), self.gap_start, self.gap_end, self.data);
         self.data.copy_within(from..(from+len), to);
     }
-
 }
 
 impl GapBuffer<usize> {
