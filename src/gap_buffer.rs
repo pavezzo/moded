@@ -169,7 +169,7 @@ impl TextBuffer {
         }
 
         let line_start = self.lines.get_one(line);
-        self.chars.get_to_end(line_start).len()
+        self.chars.len() - line_start
     }
 
     pub fn total_lines(&self) -> usize {
@@ -261,8 +261,10 @@ impl TextBuffer {
         let start = self.lines.get_one(line);
         let len = self.raw_line_len(line);
         self.chars.remove(start + len - self.line_sep as usize, self.line_sep as usize);
-        self.lines.decrement_range_by((line + 1)..self.lines.len(), self.line_sep as usize);
-        self.lines.remove(line, 1);
+        if line + 1 < self.total_lines() {
+            self.lines.decrement_range_by((line + 1)..self.lines.len(), self.line_sep as usize);
+            self.lines.remove(line + 1, 1);
+        }
     }
 
     pub fn split_line_at_index(&mut self, line: usize, index: usize) {

@@ -1,7 +1,5 @@
 use std::{fs, io::{self, Read, Write}, path::{Path, PathBuf}};
 
-use glfw::CursorMode;
-
 use crate::{gap_buffer::{LinePos, LineView, TextBuffer}, vim_commands::*, SpecialKey, State};
 
 #[derive(PartialEq, Eq, Clone, Copy)]
@@ -17,7 +15,7 @@ pub struct Editor {
     pub buffer: TextBuffer,
     pub file_path: PathBuf,
     pub mode: EditorMode,
-    pub motion_commands: Vec<MotionCmd>,
+    pub motion: Motion,
     pub visual_range_anchor: LinePos,
     pub command_bar_input: String,
 }
@@ -36,7 +34,7 @@ impl Editor {
                 buffer: TextBuffer::from_data(lines),
                 file_path: path.to_owned(),
                 mode: EditorMode::Normal,
-                motion_commands: Vec::new(),
+                motion: Motion::new(),
                 visual_range_anchor: LinePos { line: 0, col: 0 },
                 command_bar_input: String::new(),
             }
@@ -49,11 +47,11 @@ impl Editor {
         let mut file = std::fs::File::create(&self.file_path).unwrap();
         match view {
             LineView::Contiguous(s) => {
-                file.write_all(s.as_bytes());
+                file.write_all(s.as_bytes()).unwrap();
             },
             LineView::Parts(s1, s2) => {
-                file.write_all(s1.as_bytes());
-                file.write_all(s2.as_bytes());
+                file.write_all(s1.as_bytes()).unwrap();
+                file.write_all(s2.as_bytes()).unwrap();
             },
         }
     }
@@ -114,304 +112,145 @@ impl Editor {
                 self.mode = EditorMode::Normal;
             }
         } else {
-            for char in state.io.chars.chars() {
-                let Some(cmd) = MotionCmd::from_char(&mut self.motion_commands, char, self.mode) else { continue; };
-                self.motion_commands.push(cmd);
+            let chars = state.io.chars.chars().collect::<Vec<_>>();
+            for char in chars {
+                self.motion.parse(char, self.mode);
+                if self.execute_cmd(state) {
+                    self.motion.clear();
+                }
             }
-            self.execute_commands(state);
+            //self.execute_commands(state);
             if state.io.pressed_special(SpecialKey::Escape) {
-                self.motion_commands.clear();
+                self.motion.clear();
                 self.mode = EditorMode::Normal;
             }
         } 
     }
 
-    fn execute_commands(&mut self, state: &mut State) {
-        let mut executed = 0;
-        let line = state.cursor.y as usize - 1;
+    fn execute_cmd(&mut self, state: &mut State) -> bool {
+        let Some(obj) = self.motion.object else { return false };
+        let cursor = state.cursor.to_linepos();
 
-        for i in 0..self.motion_commands.len() {
-            macro_rules! previous_cmd {
-                () => {
-                    if i > 0 {
-                        Some(&self.motion_commands[i - 1])
-                    } else {
-                        None
+        match obj {
+            Object::BackWord => 'b: {
+                let Some(pos) = find_previous_word_start(cursor, &self.buffer) else { break 'b };
+                if self.motion.action == Some(Action::Delete) {
+                    self.buffer.remove_by_range(pos, cursor);
+                }
+                state.cursor.from_linepos(pos);
+            },
+            Object::BackWORD => {
+                todo!();
+                //let Some(pos) = find_previous_WORD_start(cursor, &self.buffer) else { break 'b };
+            },
+            Object::Word => 'b: {
+                if self.motion.modifier == Some(Modifier::Inside) {
+                    let Some(start) = find_current_word_start(cursor, &self.buffer) else { break 'b };
+                    let Some(end) = find_current_word_end(cursor, &self.buffer) else { break 'b };
+                    if self.motion.action == Some(Action::Delete) {
+                        self.buffer.remove_from_line(cursor.line, start.col, end.col - start.col + 1);
+                        state.cursor.x = ((start.col + 1).min(self.buffer.line_len(cursor.line))).max(1);
+                        state.cursor.wanted_x = state.cursor.x;
+                    } else if self.mode == EditorMode::Visual {
+                        self.visual_range_anchor = start;
+                        state.cursor.from_linepos(end);
                     }
+                } else {
+                    let pos = if let Some(Modifier::Count(n)) = self.motion.modifier {
+                        count(cursor, &self.buffer, n, find_next_word_start)
+                    } else {
+                        find_next_word_start(cursor, &self.buffer)
+                    };
+                    let Some(mut pos) = pos else { break 'b };
+
+                    if self.motion.action == Some(Action::Delete) {
+                        if pos.col > 0 {
+                            pos.col -= 1;
+                        } else {
+                            pos.line -= 1;
+                            pos.col = self.buffer.line_len(pos.line);
+                        }
+                        self.buffer.remove_by_range(cursor, pos);
+                    } else {
+                        state.cursor.from_linepos(pos);
+                    }
+                }
+            },
+            Object::WordEnd => 'b: {
+                let pos = if let Some(Modifier::Count(n)) = self.motion.modifier {
+                    count(cursor, &self.buffer, n, find_next_word_end)
+                } else {
+                    find_next_word_end(cursor, &self.buffer)
                 };
-            }
-            macro_rules! two_previous_cmds {
-                () => {
-                    if i > 1 {
-                        (Some(&self.motion_commands[i - 2]), Some(&self.motion_commands[i - 1]))
-                    } else if i > 0 {
-                        (None, Some(&self.motion_commands[i - 1]))
-                    } else {
-                        (None, None)
-                    }
-                };
-            }
+                let Some(pos) = pos else { break 'b };
 
-            let cmd = &self.motion_commands[i];
-            match cmd {
-                MotionCmd::Append => {
-                    self.mode = EditorMode::Insert;
-                    let row_len = self.buffer.line_len(line);
-                    if row_len > 0 {
-                        state.cursor.x += 1;
+                if self.motion.action == Some(Action::Delete) {
+                    self.buffer.remove_by_range(cursor, pos);
+                } else {
+                    state.cursor.from_linepos(pos);
+                }
+            },
+            Object::WORDEnd => todo!(),
+            Object::WORD => 'b: {
+                if self.motion.modifier == Some(Modifier::Inside) {
+                    let Some(start) = find_current_WORD_start(cursor, &self.buffer) else { break 'b };
+                    let Some(end) = find_current_WORD_end(cursor, &self.buffer) else { break 'b };
+                    if self.motion.action == Some(Action::Delete) {
+                        self.buffer.remove_by_range(start, end);
+                        state.cursor.x = ((start.col + 1).min(self.buffer.line_len(cursor.line))).max(1);
+                        state.cursor.wanted_x = state.cursor.x;
+                    } else if self.mode == EditorMode::Visual {
+                        self.visual_range_anchor = start;
+                        state.cursor.from_linepos(end);
                     }
-                    executed += 1;
-                },
-                MotionCmd::Down => {
-                    if state.cursor.y < self.buffer.total_lines() {
-                        state.cursor.y += 1;
-                    }
-                    let max_x = self.buffer.line_len(state.cursor.y as usize - 1).max(1);
-                    if state.cursor.wanted_x > max_x {
-                        state.cursor.x = max_x;
+                } else {
+                    let pos = if let Some(Modifier::Count(n)) = self.motion.modifier {
+                        count(cursor, &self.buffer, n, find_next_WORD_start)
                     } else {
-                        state.cursor.x = state.cursor.wanted_x;
-                    }
-                    executed += 1;
-                },
-                MotionCmd::Insert => {
-                    self.mode = EditorMode::Insert;
-                    executed += 1;
-                },
-                MotionCmd::Left => {
-                    if state.cursor.x > 1 {
-                        state.cursor.x -= 1;
-                        state.cursor.wanted_x -= 1;
-                    }
-                    executed += 1;
-                },
-                MotionCmd::LineEnd => {
-                    let prev = previous_cmd!();
-                    if prev == Some(&MotionCmd::Delete) {
-                        let cursor = state.cursor.to_linepos();
-                        let line_len = self.buffer.line_len(cursor.line);
-                        self.buffer.remove_from_line(cursor.line, cursor.col, line_len - cursor.col);
-                        if cursor.col > 0 {
-                            state.cursor.x -= 1;
-                            state.cursor.wanted_x = state.cursor.x;
+                        find_next_WORD_start(cursor, &self.buffer)
+                    };
+                    let Some(mut pos) = pos else { break 'b };
+
+                    if self.motion.action == Some(Action::Delete) {
+                        if pos.col > 0 {
+                            pos.col -= 1;
+                        } else {
+                            pos.line -= 1;
+                            pos.col = self.buffer.line_len(pos.line);
                         }
-                        executed += 2;
-                        continue
+                        self.buffer.remove_by_range(cursor, pos);
+                    } else {
+                        state.cursor.from_linepos(pos);
                     }
-                    // go one over like in vim
+                }
+            },
+            Object::Append => {
+                self.mode = EditorMode::Insert;
+                let line_len = self.buffer.line_len(cursor.line);
+                if line_len > 0 {
+                    state.cursor.x += 1;
+                }
+            },
+            Object::Insert => self.mode = EditorMode::Insert,
+            Object::NormalMode => self.mode = EditorMode::Normal,
+            Object::VisualMode => {
+                self.mode = EditorMode::Visual;
+                self.visual_range_anchor = cursor;
+            },
+            Object::VisualLineMode => {
+                self.mode = EditorMode::VisualLine;
+                self.visual_range_anchor = cursor;
+            },
+            Object::VisualSelection => {
+                if self.motion.action == Some(Action::Delete) {
                     if self.mode == EditorMode::Visual {
-                        state.cursor.x = (self.buffer.line_len(state.cursor.y as usize - 1) + 1).max(1);
-                    } else {
-                        state.cursor.x = (self.buffer.line_len(state.cursor.y as usize - 1)).max(1);
-                    }
-                    state.cursor.wanted_x = state.cursor.x;
-                    executed += 1;
-                },
-                MotionCmd::LineStart => {
-                    let prev = previous_cmd!();
-                    if prev == Some(&MotionCmd::Delete) {
-                        let cursor = state.cursor.to_linepos();
-                        self.buffer.remove_from_line(cursor.line, 0, cursor.col);
-                        executed += 1;
-                    }
-                    state.cursor.x = 1;
-                    state.cursor.wanted_x = 1;
-                    executed += 1;
-                },
-                MotionCmd::Right => {
-                    let line_len = self.buffer.line_len(state.cursor.y as usize - 1);
-                    if state.cursor.x < line_len {
-                        state.cursor.x += 1;
-                        state.cursor.wanted_x += 1;
-                    } else if self.mode == EditorMode::Visual && state.cursor.x == line_len {
-                        // go one over like in vim to delete whole line + newline
-                        state.cursor.x += 1;
-                        state.cursor.wanted_x += 1;
-                    }
-                    executed += 1;
-                },
-                MotionCmd::Up => {
-                    if state.cursor.y > 1 {
-                        state.cursor.y -= 1;
-                    }
-                    let max_x = (self.buffer.line_len(state.cursor.y as usize - 1)).max(1);
-                    if state.cursor.wanted_x > max_x {
-                        state.cursor.x = max_x;
-                    } else {
-                        state.cursor.x = state.cursor.wanted_x;
-                    }
-                    executed += 1;
-                },
-                MotionCmd::Word => {
-                    let (prev1, prev2) = two_previous_cmds!();
-                    match prev2 {
-                        None => {
-                            let cursor = state.cursor.to_linepos();
-                            let Some(pos) = find_next_word_start(cursor, &self.buffer) else { executed += 1; continue };
-                            state.cursor.from_linepos(pos);
-                            executed += 1;
-                        },
-                        Some(MotionCmd::Count(n)) => {
-                            let cursor = state.cursor.to_linepos();
-                            let Some(mut pos) = count(cursor, &self.buffer, *n, find_next_word_start) else { executed += 2; continue };
-                            match prev1 {
-                                Some(MotionCmd::Delete) => {
-                                    if pos.col > 0 {
-                                        pos.col -= 1;
-                                    } else {
-                                        pos.line -= 1;
-                                        pos.col = self.buffer.line_len(pos.line);
-                                    }
-                                    self.buffer.remove_by_range(cursor, pos);
-                                    executed += 3;
-                                },
-                                None => {
-                                    state.cursor.from_linepos(pos);
-                                    executed += 2;
-                                }
-                                _ => {},
-                            }
-                        }
-                        Some(MotionCmd::Inside) => {
-                            let cursor = state.cursor.to_linepos();
-                            let Some(start) = find_current_word_start(cursor, &self.buffer) else { executed += 1; continue };
-                            let Some(end) = find_current_word_end(cursor, &self.buffer) else { executed += 1; continue };
-                            if self.mode == EditorMode::Visual {
-                                self.visual_range_anchor = start;
-                                state.cursor.from_linepos(end);
-                                executed += 2;
-                                continue
-                            }
-
-                            match prev1 {
-                                None => executed += 2,
-                                Some(MotionCmd::Delete) => {
-                                    let line = state.cursor.y - 1;
-                                    self.buffer.remove_from_line(line, start.col, end.col - start.col + 1);
-                                    state.cursor.x = ((start.col + 1).min(self.buffer.line_len(line))).max(1);
-                                    state.cursor.wanted_x = state.cursor.x;
-                                    executed += 3;
-                                }
-                                _ => {},
-                            }
-
-                        },
-                        Some(MotionCmd::Delete) => {
-                            let cursor = state.cursor.to_linepos();
-                            match prev1 {
-                                None => {
-                                    let Some(pos) = find_next_word_start(cursor, &self.buffer) else { executed += 1; continue; };
-                                    if pos.line + 1 == state.cursor.y {
-                                        self.buffer.remove_from_line(state.cursor.y - 1, state.cursor.x - 1, pos.col - state.cursor.x);
-                                    }
-                                    executed += 2;
-                                },
-                                Some(MotionCmd::Count(n)) => {
-                                    let Some(mut pos) = count(cursor, &self.buffer, *n, find_next_word_start) else { executed += 2; continue };
-                                    if pos.col > 0 {
-                                        pos.col -= 1;
-                                    } else {
-                                        pos.line -= 1;
-                                        pos.col = self.buffer.line_len(pos.line);
-                                    }
-                                    self.buffer.remove_by_range(cursor, pos);
-                                    executed += 3;
-                                },
-                                _ => {},
-                            }
-                        },
-                        _ => {},
-                    }
-                },
-                MotionCmd::WORD => {
-                    let (prev1, prev2) = two_previous_cmds!();
-                    match prev2 {
-                        None => {
-                            let cursor = state.cursor.to_linepos();
-                            let Some(pos) = find_next_WORD_start(cursor, &self.buffer) else { executed += 1; continue };
-                            state.cursor.from_linepos(pos);
-                        },
-                        Some(MotionCmd::Inside) => {
-                            let cursor = state.cursor.to_linepos();
-                            let Some(start) = find_current_WORD_start(cursor, &self.buffer) else { executed += 1; continue };
-                            let Some(end) = find_current_WORD_end(cursor, &self.buffer) else { executed += 1; continue };
-                            if self.mode == EditorMode::Visual {
-                                self.visual_range_anchor = start;
-                                state.cursor.from_linepos(end);
-                                executed += 2;
-                                continue
-                            }
-
-                            match prev1 {
-                                None => executed += 1,
-                                Some(MotionCmd::Delete) => {
-                                    let line = state.cursor.y - 1;
-                                    self.buffer.remove_from_line(line, start.col, end.col - start.col + 1);
-                                    state.cursor.x = ((start.col + 1).min(self.buffer.line_len(line))).max(1);
-                                    state.cursor.wanted_x = state.cursor.x;
-                                    executed += 2;
-                                }
-                                _ => {},
-                            }
-
-                        },
-                        Some(MotionCmd::Delete) => {
-                            let cursor = state.cursor.to_linepos();
-                            let Some(pos) = find_next_WORD_start(cursor, &self.buffer) else { executed += 1; continue };
-                            if pos.line + 1 == state.cursor.y {
-                                self.buffer.remove_from_line(state.cursor.y - 1, state.cursor.x - 1, pos.col - state.cursor.x);
-                            }
-                            executed += 1;
-                        },
-                        _ => {},
-                    }
-                    executed += 1;
-                },
-                MotionCmd::BackWord => {
-                    let prev = previous_cmd!();
-                    let cursor = state.cursor.to_linepos();
-                    let Some(pos) = find_previous_word_start(cursor, &self.buffer) else { executed += 1; continue };
-                    match prev {
-                        None => {
-                            state.cursor.from_linepos(pos);
-                        },
-                        Some(MotionCmd::Delete) => {
-
-                        },
-                        _ => {},
-                    }
-                    executed += 1;
-                },
-                MotionCmd::Xdel => {
-                    let prev = previous_cmd!();
-                    let n = if let Some(MotionCmd::Count(n)) = prev { *n } else { 1 };
-                    let line_len = self.buffer.line_len(line);
-                    let cursor = state.cursor.to_linepos();
-                    if line_len > 0 {
-                        self.buffer.remove_from_line(line, cursor.col, (n as usize).min(line_len - cursor.col));
-                        if (state.cursor.x - 1) as usize >= (line_len - 1) && state.cursor.x > 1 {
-                            state.cursor.x -= 1;
-                            state.cursor.wanted_x = state.cursor.x;
-                        }
-                    }
-                    executed += 1;
-                },
-                MotionCmd::Delete => {
-                    if self.mode == EditorMode::Visual {
-                        let cursor = state.cursor.to_linepos();
                         let min = self.visual_range_anchor.min(cursor);
                         let max = self.visual_range_anchor.max(cursor);
                         self.buffer.remove_by_range(min, max);
 
                         state.cursor.from_linepos(min);
-
                         self.mode = EditorMode::Normal;
-                        executed += 1;
-                        continue
-                    }
-
-                    if self.mode == EditorMode::VisualLine {
-                        let cursor = state.cursor.to_linepos();
+                    } else if self.mode == EditorMode::VisualLine {
                         let mut start = self.visual_range_anchor.min(cursor);
                         let end = self.visual_range_anchor.max(cursor);
                         for _ in start.line..(end.line + 1) {
@@ -424,136 +263,132 @@ impl Editor {
                         state.cursor.from_linepos(start);
                         
                         self.mode = EditorMode::Normal;
-                        executed += 1;
-                        continue
-                    }
-
-                    let prev = previous_cmd!();
-                    match prev {
-                        Some(MotionCmd::Delete) => {
-                            self.buffer.remove_line(state.cursor.y as usize - 1);
-                            if state.cursor.y as usize > self.buffer.total_lines() && state.cursor.y > 1 {
-                                state.cursor.y -= 1;
-                            }
-                            let line_len = self.buffer.line_len(state.cursor.y - 1);
-                            if state.cursor.x as usize > line_len {
-                                state.cursor.x = line_len.max(1);
-                            }
-                            executed += 2;
-                        },
-                        None => continue,
-                        _ => continue,
-                    }
-                },
-                MotionCmd::VisualMode => {
-                    self.mode = EditorMode::Visual;
-                    let cursor = state.cursor.to_linepos();
-                    self.visual_range_anchor = cursor;
-
-                    executed += 1;
-                },
-                MotionCmd::VisualLineMode => {
-                    self.mode = EditorMode::VisualLine;
-                    let cursor = state.cursor.to_linepos();
-                    self.visual_range_anchor = cursor;
-
-                    executed += 1;
-                },
-                MotionCmd::Goto => {
-                    let (prev1, prev2) = two_previous_cmds!();
-                    match prev2 {
-                        Some(MotionCmd::Goto) => {
-                            match prev1 {
-                                None => {
-                                    let line_len = self.buffer.line_len(0);
-                                    state.cursor.y = 1;
-                                    state.cursor.x = state.cursor.x.min(line_len);
-                                    state.cursor.wanted_x = state.cursor.x;
-                                    executed += 2;
-                                    continue
-                                },
-                                Some(MotionCmd::Count(n)) => {
-                                    let n = *n as usize;
-                                    let total_lines = self.buffer.total_lines();
-                                    let line = n.min(total_lines);
-                                    let line_len = self.buffer.line_len(line - 1);
-                                    state.cursor.y = line;
-                                    state.cursor.x = state.cursor.x.min(line_len + 1);
-                                    state.cursor.wanted_x = state.cursor.x;
-                                    executed += 3;
-                                    continue
-                                }
-                                _ => continue,
-                            }
-                        },
-                        _ => continue,
                     }
                 }
-                MotionCmd::GOTO => {
-                    let prev = previous_cmd!();
-                    match prev {
-                        None => {
-                            let mut cursor = state.cursor.to_linepos();
-                            let last_line = self.buffer.total_lines() - 1;
-                            let line_len = self.buffer.line_len(last_line);
-                            cursor.line = last_line;
-                            cursor.col = cursor.col.min(line_len);
-                            state.cursor.from_linepos(cursor);
-                            executed += 1;
-                            continue
-                        },
-                        Some(MotionCmd::Count(n)) => {
-                            let n = *n as usize;
-                            let total_lines = self.buffer.total_lines();
-                            let line = n.min(total_lines);
-                            let line_len = self.buffer.line_len(line - 1);
-                            state.cursor.y = line;
-                            state.cursor.x = state.cursor.x.min(line_len);
-                            state.cursor.wanted_x = state.cursor.x;
-                            executed += 2;
-                            continue
-                        },
-                        _ => continue,
+            },
+            Object::CommandBarMode => {
+                self.mode = EditorMode::CommandBar;
+                self.command_bar_input.push(':');
+                state.cmd_bar_cursor_x = 1;
+            },
+            Object::Up => {
+                if cursor.line > 0 {
+                    state.cursor.y -= 1;
+                    let max_x = (self.buffer.line_len(cursor.line - 1)).max(1);
+                    if state.cursor.wanted_x > max_x {
+                        state.cursor.x = max_x;
+                    } else {
+                        state.cursor.x = state.cursor.wanted_x;
                     }
-                },
-                MotionCmd::WordEnd => {
-                    let prev = previous_cmd!();
-                    match prev {
-                        None => {
-                            let cursor = state.cursor.to_linepos();
-                            let Some(pos) = find_next_word_end(cursor, &self.buffer) else { executed += 1; continue };
-                            state.cursor.from_linepos(pos);
-                            executed += 1;
-                            continue
-                        },
-                        Some(MotionCmd::Count(n)) => {
-                            let cursor = state.cursor.to_linepos();
-                            let Some(pos) = count(cursor, &self.buffer, *n, find_next_word_end) else { executed += 2; continue };
-                            state.cursor.from_linepos(pos);
-                            executed += 2;
-                            continue
-                        },
-                        Some(MotionCmd::Delete) => {
-                            //let cursor = state.cursor.to_linepos();
-                            //let Some(pos) = find_next_word_end(cursor, &self.buffer) else { executed += 1; continue };
-                        },
-                        _ => continue,
-                    }
-                },
-                MotionCmd::CommandBarMode => {
-                    self.mode = EditorMode::CommandBar;
-                    self.command_bar_input.push(':');
-                    state.cmd_bar_cursor_x = 1;
-                    executed += 1;
-                    continue
                 }
-                MotionCmd::Inside => continue,
-                MotionCmd::Count(_) => continue,
-                _ => todo!("{:?}", cmd),
-            }
+            },
+            Object::Down => {
+                if cursor.line < self.buffer.total_lines() - 1 {
+                    state.cursor.y += 1;
+                    let max_x = self.buffer.line_len(cursor.line + 1).max(1);
+                    if state.cursor.wanted_x > max_x {
+                        state.cursor.x = max_x;
+                    } else {
+                        state.cursor.x = state.cursor.wanted_x;
+                    }
+                }
+            },
+            Object::Left => {
+                if cursor.col > 0 {
+                    state.cursor.x -= 1;
+                    state.cursor.wanted_x = state.cursor.x;
+                }
+            },
+            Object::Right => {
+                let line_len = self.buffer.line_len(cursor.line);
+                if cursor.col + 1 < line_len {
+                    state.cursor.x += 1;
+                    state.cursor.wanted_x += 1;
+                } else if self.mode == EditorMode::Visual && state.cursor.x == line_len {
+                    // go one over like in vim to delete whole line + newline
+                    state.cursor.x += 1;
+                    state.cursor.wanted_x += 1;
+                }
+            },
+            Object::Line => 'b: {
+                if self.motion.action == Some(Action::Delete) {
+                    self.buffer.remove_line(cursor.line);
+                    if cursor.line == self.buffer.total_lines() && cursor.line > 0 {
+                        state.cursor.y -= 1;
+                    }
+                    let line_len = self.buffer.line_len(state.cursor.y - 1);
+                    if cursor.col >= line_len {
+                        state.cursor.x = line_len.max(1);
+                    }
+                    break 'b
+                }
+
+                if self.motion.action == Some(Action::Goto) {
+                    let line = if let Some(Modifier::Count(n)) = self.motion.modifier { n as usize } else { 1 };
+                    let total_lines = self.buffer.total_lines();
+                    let line = line.min(total_lines);
+                    let line_len = self.buffer.line_len(line - 1);
+                    state.cursor.y = line;
+                    state.cursor.x = state.cursor.x.min(line_len);
+                    break 'b
+                }
+
+                if self.motion.action == Some(Action::GOTO) {
+                    if let Some(Modifier::Count(n)) = self.motion.modifier {
+                        let line = n as usize;
+                        let total_lines = self.buffer.total_lines();
+                        let line = line.min(total_lines);
+                        let line_len = self.buffer.line_len(line - 1);
+                        state.cursor.y = line;
+                        state.cursor.x = state.cursor.x.min(line_len);
+                    } else {
+                        let last_line = self.buffer.total_lines() - 1;
+                        let line_len = self.buffer.line_len(last_line);
+                        state.cursor.y = last_line + 1;
+                        state.cursor.x = state.cursor.wanted_x.min(line_len);
+                    }
+                }
+            },
+            Object::LineStart => {
+                if self.motion.action == Some(Action::Delete) {
+                    self.buffer.remove_from_line(cursor.line, 0, cursor.col);
+                }
+                state.cursor.x = 1;
+                state.cursor.wanted_x = 1;
+            },
+            Object::LineEnd => 'b: {
+                if self.motion.action == Some(Action::Delete) {
+                    let line_len = self.buffer.line_len(cursor.line);
+                    self.buffer.remove_from_line(cursor.line, cursor.col, line_len - cursor.col);
+                    if cursor.col > 0 {
+                        state.cursor.x -= 1;
+                        state.cursor.wanted_x = state.cursor.x;
+                    }
+                    break 'b
+                }
+
+                // go one over like in vim
+                if self.mode == EditorMode::Visual {
+                    state.cursor.x = (self.buffer.line_len(state.cursor.y as usize - 1) + 1).max(1);
+                } else {
+                    state.cursor.x = (self.buffer.line_len(state.cursor.y as usize - 1)).max(1);
+                }
+                state.cursor.wanted_x = state.cursor.x;
+            },
+            Object::CharUnderCursor => {
+                let n = if let Some(Modifier::Count(n)) = self.motion.modifier { n } else { 1 };
+                let line_len = self.buffer.line_len(cursor.line);
+                if line_len > 0 {
+                    self.buffer.remove_from_line(cursor.line, cursor.col, (n as usize).min(line_len - cursor.col));
+                    if (state.cursor.x - 1) as usize >= (line_len - 1) && state.cursor.x > 1 {
+                        state.cursor.x -= 1;
+                        state.cursor.wanted_x = state.cursor.x;
+                    }
+                }
+            },
         }
 
-        self.motion_commands.drain(0..executed);
+        true
     }
 }
 

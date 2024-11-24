@@ -1,115 +1,155 @@
-use crate::{editor::EditorMode, gap_buffer::{LinePos, TextBuffer}, State};
+use crate::{editor::EditorMode, gap_buffer::{LinePos, TextBuffer}};
 
 
-#[derive(PartialEq, Eq, Debug)]
-pub enum MotionCmd {
-    Append,
-    Around,
-    BackWord,
-    Char(char),
+#[derive(PartialEq, Clone, Copy)]
+pub enum Action {
     Delete,
-    Down,
     Goto,
     GOTO,
-    Insert, 
-    Inside,
-    Left,
-    LineEnd,
-    LineStart,
-    Right,
-    SeekBackward,
-    SeekForward,
-    TillBackward,
-    TillForward,
-    Count(u32),
-    Up,
-    NormalMode,
-    VisualMode,
-    VisualLineMode,
-    CommandBarMode,
-    WORD,
-    Word,
-    WordEnd,
-    Xdel,
 }
 
+#[derive(Clone, Copy)]
+pub enum Object {
+    BackWord,
+    BackWORD,
+    Word,
+    WordEnd,
+    WORD,
+    WORDEnd,
+    Append,
+    Insert,
+    NormalMode,
+    VisualMode,
+    VisualSelection,
+    VisualLineMode,
+    CommandBarMode,
+    Up,
+    Down,
+    Left,
+    Right,
+    Line,
+    LineStart,
+    LineEnd,
+    CharUnderCursor,
+}
 
-impl MotionCmd {
-    pub fn from_char(previous: &mut [MotionCmd], ch: char, current_mode: EditorMode) -> Option<Self> {
-        match ch {
-            '$' => Some(MotionCmd::LineEnd),
+#[derive(PartialEq, Clone, Copy)]
+pub enum Modifier {
+    Around,
+    Inside,
+    FindForwards,
+    FindBackwards,
+    TillForwards,
+    TillBackwards,
+    Count(u32),
+}
+
+pub struct Motion {
+    pub action: Option<Action>,
+    pub object: Option<Object>,
+    pub modifier: Option<Modifier>,
+}
+
+impl Motion {
+    pub fn new() -> Self {
+        Self { action: None, object: None, modifier: None }
+    }
+
+    pub fn clear(&mut self) {
+        self.action = None;
+        self.object = None;
+        self.modifier = None;
+    }
+
+    pub fn parse(&mut self, char: char, current_mode: EditorMode) {
+        match char {
+            '$' => self.object = Some(Object::LineEnd),
             '1' ..= '9' => {
-                match previous.last() {
-                    Some(MotionCmd::Count(n)) => {
-                        previous[previous.len()-1] = MotionCmd::Count(n * 10 + (ch as u32 - '0' as u32));
-                        None
-                    },
-                    _ => Some(MotionCmd::Count(ch as u32 - '0' as u32)),
+                if let Some(Modifier::Count(n)) = self.modifier {
+                    self.modifier = Some(Modifier::Count(n * 10 + (char as u32 - '0' as u32)));
+                } else {
+                    self.modifier = Some(Modifier::Count(char as u32 - '0' as u32));
                 }
             },
             '0' => {
-                match previous.last() {
-                    Some(MotionCmd::Count(n)) => {
-                        previous[previous.len()-1] = MotionCmd::Count(n * 10);
-                        None
-                    },
-                    _ => Some(MotionCmd::LineStart),
+                if let Some(Modifier::Count(n)) = self.modifier {
+                    self.modifier = Some(Modifier::Count(n * 10));
+                } else {
+                    self.object = Some(Object::LineStart);
                 }
             },
             'a' => {
                 if current_mode == EditorMode::Visual {
-                    return Some(MotionCmd::Around)
-                }
-                match previous.last() {
-                    Some(MotionCmd::Delete) => Some(MotionCmd::Around),
-                    None => Some(MotionCmd::Append),
-                    _ => None,
+                    self.modifier = Some(Modifier::Around);
+                } else if self.action == Some(Action::Delete) {
+                    self.modifier = Some(Modifier::Around);
+                } else {
+                    self.object = Some(Object::Append);
                 }
             },
-            'b' => Some(MotionCmd::BackWord),
-            'd' => Some(MotionCmd::Delete),
-            'e' => Some(MotionCmd::WordEnd),
-            'g' => Some(MotionCmd::Goto),
-            'G' => Some(MotionCmd::GOTO),
-            'h' => Some(MotionCmd::Left),
+            'b' => self.object = Some(Object::BackWord),
+            'd' => {
+                if self.action == Some(Action::Delete) {
+                    self.object = Some(Object::Line);
+                } else {
+                    self.action = Some(Action::Delete);
+                    if current_mode == EditorMode::Visual || current_mode == EditorMode::VisualLine {
+                        self.object = Some(Object::VisualSelection);
+                    }
+                }
+            },
+            'e' => self.object = Some(Object::WordEnd),
+            'g' => {
+                if self.action == Some(Action::Goto) {
+                    self.object = Some(Object::Line);
+                } else {
+                    self.action = Some(Action::Goto);
+                }
+            },
+            'G' => {
+                self.object = Some(Object::Line);
+                self.action = Some(Action::GOTO);
+            },
+            'h' => self.object = Some(Object::Left),
             'i' => {
                 if current_mode == EditorMode::Visual {
-                    return Some(MotionCmd::Inside)
-                }
-                match previous.last() {
-                    Some(MotionCmd::Delete) => Some(MotionCmd::Inside),
-                    None => Some(MotionCmd::Insert),
-                    _ => None,
+                    self.modifier = Some(Modifier::Inside);
+                } else if self.action == Some(Action::Delete) {
+                    self.modifier = Some(Modifier::Inside);
+                } else {
+                    self.object = Some(Object::Insert);
                 }
             },
-            'j' => Some(MotionCmd::Down),
-            'k' => Some(MotionCmd::Up),
-            'l' => Some(MotionCmd::Right),
+            'j' => self.object = Some(Object::Down),
+            'k' => self.object = Some(Object::Up),
+            'l' => self.object = Some(Object::Right),
             'v' => {
                 if current_mode == EditorMode::Visual {
-                    return Some(MotionCmd::NormalMode)
+                    self.object = Some(Object::NormalMode)
                 }
-                Some(MotionCmd::VisualMode)
+                self.object = Some(Object::VisualMode);
             },
             'V' => {
                 if current_mode == EditorMode::VisualLine {
-                    return Some(MotionCmd::NormalMode)
+                    self.object = Some(Object::NormalMode);
                 }
-                Some(MotionCmd::VisualLineMode)
+                self.object = Some(Object::VisualLineMode);
             },
-            'w' => Some(MotionCmd::Word),
-            'W' => Some(MotionCmd::WORD),
+            'w' => self.object = Some(Object::Word),
+            'W' => self.object = Some(Object::WORD),
             'x' => {
                 if current_mode == EditorMode::Visual {
-                    return Some(MotionCmd::Delete)
+                    self.action = Some(Action::Delete)
                 }
-                Some(MotionCmd::Xdel)
+                self.action = Some(Action::Delete);
+                self.object = Some(Object::CharUnderCursor);
             },
-            ':' => Some(MotionCmd::CommandBarMode),
-            _ => None,
+            ':' => self.object = Some(Object::CommandBarMode),
+            _ => {},
         }
     }
 }
+
 
 type BufferCmd = fn(LinePos, &TextBuffer) -> Option<LinePos>;
 pub fn count(cursor: LinePos, buf: &TextBuffer, count: u32, f: BufferCmd) -> Option<LinePos> {
@@ -453,7 +493,7 @@ pub fn find_next_word_end(cursor: LinePos, buf: &TextBuffer) -> Option<LinePos> 
     let mut col = cursor.col;
 
     let line_len = buf.line_len(line);
-    if col < line_len - 1 {
+    if col + 1 < line_len {
         col += 1;
     } else {
         if line == buf.total_lines() - 1 {
