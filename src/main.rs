@@ -4,6 +4,7 @@ pub mod font;
 pub mod editor;
 pub mod gap_buffer;
 pub mod vim_commands;
+pub mod search;
 
 use std::path::Path;
 
@@ -347,7 +348,7 @@ fn main() {
             text_renderer.draw_line(&state, draw_line);
         }
 
-        if editor.mode == EditorMode::CommandBar {
+        if editor.mode == EditorMode::CommandBar || editor.mode == EditorMode::Search {
             let line_len = state.max_cols();
             let rect = highlight_line(&state, 0, line_len, start_line, start_line);
             rect_renderer.draw_rect(&state, rect);

@@ -20,9 +20,10 @@ pub enum Object {
     Insert,
     NormalMode,
     VisualMode,
-    VisualSelection,
     VisualLineMode,
     CommandBarMode,
+    SearchMode,
+    VisualSelection,
     Up,
     Down,
     Left,
@@ -31,6 +32,8 @@ pub enum Object {
     LineStart,
     LineEnd,
     CharUnderCursor,
+    NextSearchResult,
+    PreviousSearchResult,
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -123,6 +126,8 @@ impl Motion {
             'j' => self.object = Some(Object::Down),
             'k' => self.object = Some(Object::Up),
             'l' => self.object = Some(Object::Right),
+            'n' => self.object = Some(Object::NextSearchResult),
+            'N' => self.object = Some(Object::PreviousSearchResult),
             'v' => {
                 if current_mode == EditorMode::Visual {
                     self.object = Some(Object::NormalMode)
@@ -145,6 +150,7 @@ impl Motion {
                 self.object = Some(Object::CharUnderCursor);
             },
             ':' => self.object = Some(Object::CommandBarMode),
+            '/' => self.object = Some(Object::SearchMode),
             _ => {},
         }
     }

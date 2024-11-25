@@ -321,6 +321,34 @@ impl TextBuffer {
 
         actual_index
     }
+
+    pub fn byte_to_linepos(&self, pos: usize) -> LinePos {
+        let first = &self.lines.data[0..self.lines.gap_start];
+
+        let (target, add) = if first.len() == self.lines.len() {
+            (first, 0)
+        } else {
+            let second = &self.lines.data[self.lines.gap_end..self.lines.data.len()];
+            if second[0] <= pos { 
+                (second, first.len()) 
+            } else {
+                (first, 0)
+            }
+        };
+
+        let line = target.binary_search(&pos).unwrap_or_else(|e| e - 1) + add;
+        let start = self.lines.get_one(line);
+        let mut col = 0;
+        let iter = self.utf8_iter(LinePos{ line, col: 0 });
+        let mut actual_index = 0;
+        for ch in iter {
+            if actual_index >= pos - start { break }
+            actual_index += ch.len_utf8();
+            col += 1;
+        }
+
+        LinePos { line, col }
+    }
 }
 
 pub struct Utf8Iter<'a> {
@@ -664,7 +692,7 @@ pub struct GapBufferIter<'a> {
     inner: &'a GapBuffer<u8> 
 }
 
-impl<'a> Iterator for GapBufferIter<'a> {
+impl Iterator for GapBufferIter<'_> {
     type Item = u8;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -676,6 +704,12 @@ impl<'a> Iterator for GapBufferIter<'a> {
         }
 
         Some(self.inner.data[self.index - 1 + gap_size])
+    }
+}
+
+impl GapBufferIter<'_> {
+    fn skip(&mut self, by: usize) {
+        self.index += by;
     }
 }
 

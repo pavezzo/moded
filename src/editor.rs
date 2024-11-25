@@ -1,6 +1,6 @@
 use std::{fs, io::{self, Read, Write}, path::{Path, PathBuf}};
 
-use crate::{gap_buffer::{LinePos, LineView, TextBuffer}, vim_commands::*, SpecialKey, State};
+use crate::{gap_buffer::{LinePos, LineView, TextBuffer}, search::search, vim_commands::*, SpecialKey, State};
 
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum EditorMode {
@@ -9,6 +9,7 @@ pub enum EditorMode {
     Visual,
     VisualLine,
     CommandBar,
+    Search,
 }
 
 pub struct Editor {
@@ -18,6 +19,7 @@ pub struct Editor {
     pub motion: Motion,
     pub visual_range_anchor: LinePos,
     pub command_bar_input: String,
+    pub search_results: Vec<LinePos>,
 }
 
 
@@ -37,6 +39,7 @@ impl Editor {
                 motion: Motion::new(),
                 visual_range_anchor: LinePos { line: 0, col: 0 },
                 command_bar_input: String::new(),
+                search_results: Vec::new(),
             }
         }
         todo!();
@@ -97,6 +100,7 @@ impl Editor {
             if !state.io.chars.is_empty() {
                 self.command_bar_input.push_str(&state.io.chars);
                 state.cmd_bar_cursor_x += 1;
+
             }
             if state.io.pressed_special(SpecialKey::Enter) {
                 println!("executing cmd: {}", self.command_bar_input);
@@ -107,6 +111,35 @@ impl Editor {
             if state.io.pressed_special(SpecialKey::Backspace) {
                 self.command_bar_input.pop();
                 state.cmd_bar_cursor_x -= 1;
+            }
+            if state.io.pressed_special(SpecialKey::Escape) {
+                self.command_bar_input.clear();
+                self.mode = EditorMode::Normal;
+            }
+            if self.command_bar_input.is_empty() {
+                self.mode = EditorMode::Normal;
+            }
+        } else if self.mode == EditorMode::Search {
+            if !state.io.chars.is_empty() {
+                self.command_bar_input.push_str(&state.io.chars);
+                state.cmd_bar_cursor_x += 1;
+                let positions = search(&self.command_bar_input.as_bytes()[1..], &self.buffer);
+                self.search_results = positions;
+            }
+            if state.io.pressed_special(SpecialKey::Backspace) {
+                self.command_bar_input.pop();
+                state.cmd_bar_cursor_x -= 1;
+            }
+            if state.io.pressed_special(SpecialKey::Enter) {
+                if let Some(pos) = closest_position(state.cursor.to_linepos(), &self.search_results) {
+                    state.cursor.from_linepos(pos);
+                }
+                self.command_bar_input.clear();
+                self.mode = EditorMode::Normal;
+            }
+            if state.io.pressed_special(SpecialKey::Escape) {
+                self.command_bar_input.clear();
+                self.mode = EditorMode::Normal;
             }
             if self.command_bar_input.is_empty() {
                 self.mode = EditorMode::Normal;
@@ -329,7 +362,7 @@ impl Editor {
                     let line = line.min(total_lines);
                     let line_len = self.buffer.line_len(line - 1);
                     state.cursor.y = line;
-                    state.cursor.x = state.cursor.x.min(line_len);
+                    state.cursor.x = state.cursor.x.min(line_len + 1);
                     break 'b
                 }
 
@@ -386,9 +419,64 @@ impl Editor {
                     }
                 }
             },
+            Object::SearchMode => {
+                self.mode = EditorMode::Search;
+                self.command_bar_input.push('/');
+                state.cmd_bar_cursor_x = 1;
+            },
+            Object::NextSearchResult => 'b: {
+                let Some(pos) = next_position(cursor, &self.search_results) else { break 'b };
+                state.cursor.from_linepos(pos);
+            },
+            Object::PreviousSearchResult => 'b: {
+                let Some(pos) = previous_position(cursor, &self.search_results) else { break 'b };
+                state.cursor.from_linepos(pos);
+            },
         }
 
         true
     }
 }
 
+fn closest_position(cursor: LinePos, positions: &[LinePos]) -> Option<LinePos> {
+    if positions.is_empty() {
+        return None
+    }
+    let mut pos = positions.binary_search(&cursor).unwrap_or_else(|e| e);
+    if pos == positions.len() {
+        pos = 0;
+    }
+    Some(positions[pos])
+}
+
+fn next_position(cursor: LinePos, positions: &[LinePos]) -> Option<LinePos> {
+    if positions.is_empty() {
+        return None
+    }
+
+    let pos = match positions.binary_search(&cursor) {
+        Ok(n) => n + 1,
+        Err(n) => n,
+    };
+
+    if let Some(pos) = positions.get(pos) {
+        return Some(*pos)
+    }
+
+    Some(positions[0])
+}
+
+fn previous_position(cursor: LinePos, positions: &[LinePos]) -> Option<LinePos> {
+    if positions.is_empty() {
+        return None
+    }
+
+    let mut pos = positions.binary_search(&cursor).unwrap_or_else(|n| n);
+    if pos == 0 {
+        pos = positions.len() - 1
+    } else {
+        pos -= 1;
+    }
+
+    Some(positions[pos])
+}
