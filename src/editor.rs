@@ -1,6 +1,6 @@
 use std::{fs, io::{self, Read, Write}, path::{Path, PathBuf}};
 
-use crate::{gap_buffer::{LinePos, LineView, TextBuffer}, search::search, vim_commands::*, SpecialKey, State};
+use crate::{gap_buffer::{LinePos, LineView, TextBuffer}, indent::indent_wanted, search::search, vim_commands::*, SpecialKey, State};
 
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum EditorMode {
@@ -75,6 +75,15 @@ impl Editor {
                 }
                 state.cursor.y += 1;
                 state.cursor.x = 1;
+
+                let indent = indent_wanted(line + 1, &self.buffer);
+                if let Some(indent) = indent {
+                    if indent > 0 {
+                        self.buffer.insert_into_line(line + 1, 0, " ".repeat(indent).as_bytes());
+                        state.cursor.x = indent + 1;
+                        state.cursor.wanted_x = state.cursor.x;
+                    }
+                }
             }
             if state.io.pressed_special(SpecialKey::Escape) {
                 self.mode = EditorMode::Normal;
