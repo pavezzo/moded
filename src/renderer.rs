@@ -188,7 +188,7 @@ impl RectRenderer {
     }
 }
 
-pub fn highlight_line(state: &State, start: usize, end: usize, line: usize, start_line: usize) -> DrawRect {
+pub fn highlight_line(state: &State, start: usize, end: usize, line: usize) -> DrawRect {
     let mut width = (end + 1 - start) as f32 * state.char_width;
     width = (width * 2.0) / state.width as f32;
     let height = (state.char_height * 2.0) / state.height as f32;
@@ -196,7 +196,7 @@ pub fn highlight_line(state: &State, start: usize, end: usize, line: usize, star
     let mut xpos = start as f32 * state.char_width;
     xpos = ((xpos * 2.0) / state.width as f32) - 1.0;
 
-    let mut ypos = state.height as f32 - ((line + 1 - start_line) as f32 * state.char_height);
+    let mut ypos = state.height as f32 - ((line + 1 - state.start_line) as f32 * state.char_height);
     ypos = ((ypos * 2.0) / state.height as f32) - 1.0;
 
     let color = (0.5, 0.5, 0.5);

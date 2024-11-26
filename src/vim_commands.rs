@@ -6,6 +6,7 @@ pub enum Action {
     Delete,
     Goto,
     GOTO,
+    Scroll,
 }
 
 #[derive(Clone, Copy)]
@@ -34,6 +35,9 @@ pub enum Object {
     CharUnderCursor,
     NextSearchResult,
     PreviousSearchResult,
+    PageTop,
+    PageMiddle,
+    PageBot,
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -90,7 +94,13 @@ impl Motion {
                     self.object = Some(Object::Append);
                 }
             },
-            'b' => self.object = Some(Object::BackWord),
+            'b' => {
+                if self.action == Some(Action::Scroll) {
+                    self.object = Some(Object::PageBot);
+                } else {
+                    self.object = Some(Object::BackWord);
+                }
+            },
             'd' => {
                 if self.action == Some(Action::Delete) {
                     self.object = Some(Object::Line);
@@ -128,26 +138,41 @@ impl Motion {
             'l' => self.object = Some(Object::Right),
             'n' => self.object = Some(Object::NextSearchResult),
             'N' => self.object = Some(Object::PreviousSearchResult),
+            't' => {
+                if self.action == Some(Action::Scroll) {
+                    self.object = Some(Object::PageTop);
+                }
+            },
             'v' => {
                 if current_mode == EditorMode::Visual {
                     self.object = Some(Object::NormalMode)
+                } else {
+                    self.object = Some(Object::VisualMode);
                 }
-                self.object = Some(Object::VisualMode);
             },
             'V' => {
                 if current_mode == EditorMode::VisualLine {
                     self.object = Some(Object::NormalMode);
+                } else {
+                    self.object = Some(Object::VisualLineMode);
                 }
-                self.object = Some(Object::VisualLineMode);
             },
             'w' => self.object = Some(Object::Word),
             'W' => self.object = Some(Object::WORD),
             'x' => {
                 if current_mode == EditorMode::Visual {
                     self.action = Some(Action::Delete)
+                } else {
+                    self.action = Some(Action::Delete);
+                    self.object = Some(Object::CharUnderCursor);
                 }
-                self.action = Some(Action::Delete);
-                self.object = Some(Object::CharUnderCursor);
+            },
+            'z' => {
+                if self.action == Some(Action::Scroll) {
+                    self.object = Some(Object::PageMiddle);
+                } else {
+                    self.action = Some(Action::Scroll);
+                }
             },
             ':' => self.object = Some(Object::CommandBarMode),
             '/' => self.object = Some(Object::SearchMode),

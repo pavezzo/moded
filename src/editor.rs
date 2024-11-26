@@ -441,6 +441,34 @@ impl Editor {
                 let Some(pos) = previous_position(cursor, &self.search_results) else { break 'b };
                 state.cursor.from_linepos(pos);
             },
+            Object::PageTop => 'b: {
+                if self.motion.action == Some(Action::Scroll) {
+                    state.start_line = cursor.line;
+                    break 'b
+                }
+            },
+            Object::PageMiddle => 'b: {
+                if self.motion.action == Some(Action::Scroll) {
+                    let middle = state.max_rows() / 2 + state.start_line;
+                    let offset = middle.max(cursor.line) - middle.min(cursor.line);
+                    if middle > cursor.line {
+                        state.start_line -= offset.min(state.start_line);
+                    } else {
+                        state.start_line += offset;
+                    }
+                    break 'b
+                }
+            },
+            Object::PageBot => 'b: {
+                if self.motion.action == Some(Action::Scroll) {
+                    if cursor.line > state.max_rows() {
+                        state.start_line = state.start_line + state.max_rows() - cursor.line;
+                    } else {
+                        state.start_line = 0;
+                    }
+                    break 'b
+                }
+            },
         }
 
         true

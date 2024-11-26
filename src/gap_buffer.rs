@@ -309,6 +309,11 @@ impl TextBuffer {
 
         utf8_rev_iter
     }
+    
+    pub fn bytes_iter(&self, pos: LinePos) -> GapBufferIter {
+        let byte = self.lines.get_one(pos.line) + self.screen_index_to_bytes_index(pos.line, pos.col);  
+        GapBufferIter { index: byte, inner: &self.chars }
+    }
 
     // zero indexed
     fn screen_index_to_bytes_index(&self, line: usize, index: usize) -> usize {
