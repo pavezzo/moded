@@ -1,4 +1,4 @@
-use crate::{editor::EditorMode, gap_buffer::{LinePos, TextBuffer}};
+use crate::{editor::EditorMode, gap_buffer::{LinePos, TextBuffer}, SpecialKey, State};
 
 
 #[derive(PartialEq, Clone, Copy)]
@@ -38,6 +38,8 @@ pub enum Object {
     PageTop,
     PageMiddle,
     PageBot,
+    HalfScreenUp,
+    HalfScreenDown,
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -68,7 +70,7 @@ impl Motion {
         self.modifier = None;
     }
 
-    pub fn parse(&mut self, char: char, current_mode: EditorMode) {
+    pub fn parse(&mut self, state: &State, char: char, current_mode: EditorMode) {
         match char {
             '$' => self.object = Some(Object::LineEnd),
             '1' ..= '9' => {
@@ -104,6 +106,9 @@ impl Motion {
             'd' => {
                 if self.action == Some(Action::Delete) {
                     self.object = Some(Object::Line);
+                } else if state.io.pressed_special(SpecialKey::Control) {
+                    self.action = Some(Action::Scroll);
+                    self.object = Some(Object::HalfScreenDown);
                 } else {
                     self.action = Some(Action::Delete);
                     if current_mode == EditorMode::Visual || current_mode == EditorMode::VisualLine {
@@ -141,6 +146,12 @@ impl Motion {
             't' => {
                 if self.action == Some(Action::Scroll) {
                     self.object = Some(Object::PageTop);
+                }
+            },
+            'u' => {
+                if state.io.pressed_special(SpecialKey::Control) {
+                    self.action = Some(Action::Scroll);
+                    self.object = Some(Object::HalfScreenUp);
                 }
             },
             'v' => {

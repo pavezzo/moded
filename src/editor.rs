@@ -156,7 +156,7 @@ impl Editor {
         } else {
             let chars = state.io.chars.chars().collect::<Vec<_>>();
             for char in chars {
-                self.motion.parse(char, self.mode);
+                self.motion.parse(&state, char, self.mode);
                 if self.execute_cmd(state) {
                     self.motion.clear();
                 }
@@ -467,6 +467,24 @@ impl Editor {
                         state.start_line = 0;
                     }
                     break 'b
+                }
+            },
+            Object::HalfScreenUp => {
+                if self.motion.action == Some(Action::Scroll) {
+                    let half = state.max_rows() / 2;
+                    state.cursor.y -= state.cursor.y.min(half);
+                    state.cursor.y = state.cursor.y.max(1);
+                    state.cursor.x = state.cursor.wanted_x;
+                    state.cursor.x = state.cursor.x.min(self.buffer.line_len(state.cursor.y - 1).max(1));
+                }
+            },
+            Object::HalfScreenDown => {
+                if self.motion.action == Some(Action::Scroll) {
+                    let half = state.max_rows() / 2;
+                    state.cursor.y += half;
+                    state.cursor.y = state.cursor.y.min(self.buffer.total_lines());
+                    state.cursor.x = state.cursor.wanted_x;
+                    state.cursor.x = state.cursor.x.min(self.buffer.line_len(state.cursor.y - 1).max(1));
                 }
             },
         }
