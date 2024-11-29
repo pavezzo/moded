@@ -487,6 +487,33 @@ impl Editor {
                     state.cursor.x = state.cursor.x.min(self.buffer.line_len(state.cursor.y - 1).max(1));
                 }
             },
+            Object::InsertLineUp => {
+                self.buffer.insert_empty_line(cursor.line);
+                let indent = indent_wanted(cursor.line, &self.buffer);
+                if let Some(indent) = indent {
+                    self.buffer.insert_into_line(cursor.line, 0, " ".repeat(indent).as_bytes());
+                    state.cursor.x = indent + 1;
+                    state.cursor.wanted_x = state.cursor.x;
+                } else {
+                    state.cursor.x = 1;
+                    state.cursor.wanted_x = state.cursor.x;
+                }
+                self.mode = EditorMode::Insert;
+            },
+            Object::InsertLineDown => {
+                self.buffer.insert_empty_line(cursor.line + 1);
+                let indent = indent_wanted(cursor.line + 1, &self.buffer);
+                if let Some(indent) = indent {
+                    self.buffer.insert_into_line(cursor.line + 1, 0, " ".repeat(indent).as_bytes());
+                    state.cursor.x = indent + 1;
+                    state.cursor.wanted_x = state.cursor.x;
+                } else {
+                    state.cursor.x = 0;
+                    state.cursor.wanted_x = state.cursor.x;
+                }
+                state.cursor.y += 1;
+                self.mode = EditorMode::Insert;
+            },
         }
 
         true

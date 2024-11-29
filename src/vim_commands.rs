@@ -40,6 +40,8 @@ pub enum Object {
     PageBot,
     HalfScreenUp,
     HalfScreenDown,
+    InsertLineUp,
+    InsertLineDown,
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -143,6 +145,8 @@ impl Motion {
             'l' => self.object = Some(Object::Right),
             'n' => self.object = Some(Object::NextSearchResult),
             'N' => self.object = Some(Object::PreviousSearchResult),
+            'o' => self.object = Some(Object::InsertLineDown),
+            'O' => self.object = Some(Object::InsertLineUp),
             't' => {
                 if self.action == Some(Action::Scroll) {
                     self.object = Some(Object::PageTop);
