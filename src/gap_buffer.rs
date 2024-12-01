@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::{fmt::Debug, fs, io::{self, Read}, path::{Path, PathBuf}};
 
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
@@ -65,12 +65,18 @@ pub enum LineView<'a> {
 pub struct TextBuffer {
     pub chars: GapBuffer<u8>,
     pub lines: GapBuffer<usize>,
+    pub file_path: Option<PathBuf>,
+    pub id: usize,
     pub line_sep: LineSeparator,
 }
 
 // everything is 0-indexed
 impl TextBuffer {
-    pub fn from_data(chars: Vec<u8>) -> Self {
+    pub fn from_data(id: usize, mut chars: Vec<u8>) -> Self {
+        if chars.len() == 0 {
+            chars.push(b'\n');
+        }
+
         let mut lines = Vec::new();
         let st = unsafe {std::str::from_utf8_unchecked(&chars)};
         // assuming newlines for now
@@ -88,7 +94,31 @@ impl TextBuffer {
         let lines = GapBuffer::new(lines);
         println!("Using {:?} line separator", line_sep);
 
-        Self { chars: GapBuffer::new(chars), lines, line_sep }
+        Self { 
+            id,
+            chars: GapBuffer::new(chars),
+            lines, line_sep,
+            file_path: None
+        }
+    }
+
+    pub fn from_path(id: usize, path: &Path) -> Self {
+        let mut lines: Vec<_> = Vec::new();
+        if path.is_file() {
+            let file = fs::File::open(path).unwrap();
+            let mut reader = io::BufReader::new(file);
+            reader.read_to_end(&mut lines).expect("can't read file to end");
+            let mut me = TextBuffer::from_data(id, lines);
+            me.file_path = Some(path.to_owned());
+
+            return me
+        }
+
+        fs::File::create(path).expect("Couldn't create a file");
+        let mut me = TextBuffer::from_data(id, lines);
+        me.file_path = Some(path.to_owned());
+
+        me
     }
 
     pub fn full_view(&self) -> LineView {
@@ -893,7 +923,7 @@ mod tests {
     #[test]
     fn test_char_iter() {
         let str = "tes😃t😂iä\nja toinen 🤝 kolmas\nneljäs: ภๅ";
-        let buf = TextBuffer::from_data(str.as_bytes().to_vec());
+        let buf = TextBuffer::from_data(0, str.as_bytes().to_vec());
 
         let mut st = String::new();
         for char in buf.utf8_iter(LinePos { line: 0, col: 0 }) {
@@ -907,7 +937,7 @@ mod tests {
     fn test_rev_char_iter() {
         //let str = "tes😃t😂iä\nja toinen 🤝 kolmas\nneljäs: ภๅ";
         let str = "testiä";
-        let buf = TextBuffer::from_data(str.as_bytes().to_vec());
+        let buf = TextBuffer::from_data(0, str.as_bytes().to_vec());
 
         let mut st = String::new();
         for char in buf.utf8_rev_iter(LinePos { line: 0, col: 5 }) {
