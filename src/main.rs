@@ -131,9 +131,14 @@ pub struct CursorPos {
     pub x: usize,
     pub y: usize,
     pub wanted_x: usize,
+    pub buffer: usize,
 }
 
 impl CursorPos {
+    pub fn new(buffer: usize) -> Self {
+        Self { x: 1, y: 1, wanted_x: 1, buffer }
+    }
+
     pub fn to_screen_position(&self, state: &State, start_line: usize) -> (f32, f32) {
         // xpos, ypos
         let xpos = (self.x - 1) as f32 * state.char_width;
@@ -165,7 +170,6 @@ pub struct State {
     pub char_scale: f32,
     pub char_width: f32,
     pub char_height: f32,
-    pub cursor: CursorPos,
     pub cmd_bar_cursor_x: usize,
     pub start_line: usize,
 }
@@ -247,7 +251,7 @@ fn main() {
     let text_shader = TextShader::new(TEXT_VERTEX_SHADER_SOURCE, TEXT_FRAGMENT_SHADER_SOURCE).unwrap();
     let rect_shader = RectShader::new(RECT_VERTEX_SHADER_SOURCE, RECT_FRAGMENT_SHADER_SOURCE).unwrap();
 
-    let mut state = State { width: screen_width as i32 / 2, height: screen_height as i32 / 2, window_changed_size: true, char_scale: 40.0, char_width: 0.0, char_height: 0.0, cursor: CursorPos {x: 1, y: 1, wanted_x: 1}, io: Io { chars: String::new(), special_keys: Vec::new(), modifiers: glfw::Modifiers::empty() }, cmd_bar_cursor_x: 0, start_line: 0 };
+    let mut state = State { width: screen_width as i32 / 2, height: screen_height as i32 / 2, window_changed_size: true, char_scale: 30.0, char_width: 0.0, char_height: 0.0, io: Io { chars: String::new(), special_keys: Vec::new(), modifiers: glfw::Modifiers::empty() }, cmd_bar_cursor_x: 0, start_line: 0 };
 
     let char_cache = CharacterCache::from_font_bytes(&state, include_bytes!("../fonts/JetBrainsMono-Medium.ttf"));
     state.char_width = char_cache.get('W').unwrap().width;
@@ -299,17 +303,20 @@ fn main() {
 
         editor.handle_input(&mut state);
 
-        state.start_line = if state.cursor.y > state.start_line && state.cursor.y - state.start_line > state.max_rows() {
-            state.cursor.y - state.max_rows()
-        } else if state.cursor.y <= state.start_line {
+        let Some(buffer) = editor.buffers.get(editor.current_buffer) else { continue };
+        let Some(current_cursor) = editor.cursors.get(editor.current_buffer) else { continue };
+
+        state.start_line = if current_cursor.y > state.start_line && current_cursor.y - state.start_line > state.max_rows() {
+            current_cursor.y - state.max_rows()
+        } else if current_cursor.y <= state.start_line {
             //start_line - 1
-            state.cursor.y - 1
+            current_cursor.y - 1
         } else {
             state.start_line
         };
 
         if editor.mode == EditorMode::Visual {
-            let cursor = state.cursor.to_linepos();
+            let cursor = current_cursor.to_linepos();
             let start = editor.visual_range_anchor.min(cursor);
             let end = editor.visual_range_anchor.max(cursor);
 
@@ -317,12 +324,12 @@ fn main() {
                 let rect = highlight_line(&state, start.col, end.col, start.line);
                 rect_renderer.draw_rect(&state, rect);
             } else {
-                let line_len = editor.buffer.line_len(start.line).max(1);
+                let line_len = buffer.line_len(start.line).max(1);
                 let first = highlight_line(&state, start.col, line_len - 1, start.line);
                 rect_renderer.draw_rect(&state, first);
 
                 for line in (start.line + 1)..end.line {
-                    let line_len = editor.buffer.line_len(line).max(1);
+                    let line_len = buffer.line_len(line).max(1);
                     let rect = highlight_line(&state, 0, line_len - 1, line);
                     rect_renderer.draw_rect(&state, rect);
                 }
@@ -331,20 +338,20 @@ fn main() {
                 rect_renderer.draw_rect(&state, last);
             }
         } else if editor.mode == EditorMode::VisualLine {
-            let cursor = state.cursor.to_linepos().line;
+            let cursor = current_cursor.to_linepos().line;
             let start = editor.visual_range_anchor.line.min(cursor);
             let end = editor.visual_range_anchor.line.max(cursor);
 
             for line in start..(end + 1) {
-                let line_len = editor.buffer.line_len(line).max(1);
+                let line_len = buffer.line_len(line).max(1);
                 let rect = highlight_line(&state, 0, line_len - 1, line);
                 rect_renderer.draw_rect(&state, rect);
             }
         }
 
         let end_line = state.start_line + state.max_rows() + 1;
-        for i in (state.start_line as usize)..(editor.buffer.total_lines().min(end_line as usize)) {
-            let line = editor.buffer.line(i);
+        for i in (state.start_line as usize)..(buffer.total_lines().min(end_line as usize)) {
+            let line = buffer.line(i);
             let draw_line = DrawLine::new(&line, i + 1 - state.start_line, (1.0, 1.0, 1.0));
             text_renderer.draw_line(&state, draw_line);
         }
@@ -360,15 +367,15 @@ fn main() {
             let rect = DrawRect::from_screen_points(&state, xpos, ypos, (1.0, 1.0, 1.0));
             rect_renderer.draw_rect(&state, rect);
         } else {
-            let (xpos, ypos) = state.cursor.to_screen_position(&state, state.start_line);
+            let (xpos, ypos) = current_cursor.to_screen_position(&state, state.start_line);
             let rect = DrawRect::from_screen_points(&state, xpos, ypos, (1.0, 1.0, 1.0));
             rect_renderer.draw_rect(&state, rect);
         }
 
 
         //println!();
-        //for line in 0..editor.buffer.total_lines() {
-        //    println!("{line}: {:?}", editor.buffer.raw_line(line).as_bytes());
+        //for line in 0..buffer.total_lines() {
+        //    println!("{line}: {:?}", buffer.raw_line(line).as_bytes());
         //}
 
         unsafe {
