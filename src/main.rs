@@ -6,6 +6,7 @@ pub mod gap_buffer;
 pub mod vim_commands;
 pub mod search;
 pub mod indent;
+pub mod command_bar;
 
 use std::path::Path;
 

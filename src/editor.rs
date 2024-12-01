@@ -1,6 +1,6 @@
 use std::{fs, io::{self, Read, Write}, path::{Path, PathBuf}};
 
-use crate::{gap_buffer::{LinePos, LineView, TextBuffer}, indent::indent_wanted, search::search, vim_commands::*, SpecialKey, State};
+use crate::{command_bar::match_cmd, gap_buffer::{LinePos, LineView, TextBuffer}, indent::indent_wanted, search::search, vim_commands::*, SpecialKey, State};
 
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum EditorMode {
@@ -15,11 +15,11 @@ pub enum EditorMode {
 pub struct Editor {
     pub buffer: TextBuffer,
     pub file_path: PathBuf,
-    pub mode: EditorMode,
-    pub motion: Motion,
-    pub visual_range_anchor: LinePos,
-    pub command_bar_input: String,
     pub search_results: Vec<LinePos>,
+    pub command_bar_input: String,
+    pub visual_range_anchor: LinePos,
+    pub motion: Motion,
+    pub mode: EditorMode,
 }
 
 
@@ -61,17 +61,17 @@ impl Editor {
 
     pub fn handle_input(&mut self, state: &mut State) {
         if self.mode ==  EditorMode::Insert {
-            let line = state.cursor.y as usize - 1;
+            let line = state.cursor.y - 1;
             if !state.io.chars.is_empty() {
-                self.buffer.insert_into_line(line, state.cursor.x as usize - 1, state.io.chars.as_bytes());
+                self.buffer.insert_into_line(line, state.cursor.x - 1, state.io.chars.as_bytes());
                 state.cursor.x += state.io.chars.chars().count();
             }
             if state.io.pressed_special(SpecialKey::Enter) {
                 let line_len = self.buffer.line_len(line);
-                if line_len - (state.cursor.x as usize - 1) > 0 {
-                    self.buffer.split_line_at_index(line, state.cursor.x as usize - 1);
+                if line_len - (state.cursor.x - 1) > 0 {
+                    self.buffer.split_line_at_index(line, state.cursor.x - 1);
                 } else {
-                    self.buffer.insert_empty_line(state.cursor.y as usize);
+                    self.buffer.insert_empty_line(state.cursor.y);
                 }
                 state.cursor.y += 1;
                 state.cursor.x = 1;
@@ -84,6 +84,11 @@ impl Editor {
                         state.cursor.wanted_x = state.cursor.x;
                     }
                 }
+            }
+            if state.io.pressed_special(SpecialKey::Tab) {
+                self.buffer.insert_into_line(line, state.cursor.x - 1, " ".repeat(4).as_bytes());
+                state.cursor.x += 4;
+                state.cursor.wanted_x = state.cursor.x;
             }
             if state.io.pressed_special(SpecialKey::Escape) {
                 self.mode = EditorMode::Normal;
@@ -112,7 +117,16 @@ impl Editor {
 
             }
             if state.io.pressed_special(SpecialKey::Enter) {
-                println!("executing cmd: {}", self.command_bar_input);
+                let parts = self.command_bar_input.splitn(2, " ").collect::<Vec<_>>();
+                let func = match_cmd(&parts[0][1..]);
+                if let Some(func) = func {
+                    if parts.len() > 1 {
+                        func(state, &self, parts[1]);
+                    } else {
+                        func(state, &self, &"");
+                    }
+                }
+                //println!("executing cmd: {}", self.command_bar_input);
                 state.cmd_bar_cursor_x = 1;
                 self.command_bar_input.clear();
                 self.mode = EditorMode::Normal;
